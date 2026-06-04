@@ -8,6 +8,11 @@ gradle/wrapper/gradle-wrapper.jar
 *.iml
 local.properties
 
+# Node
+node_modules/
+package.json
+package-lock.json
+
 # OS
 .DS_Store
 Thumbs.db
