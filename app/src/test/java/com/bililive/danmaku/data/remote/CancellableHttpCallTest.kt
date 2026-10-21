@@ -68,7 +68,7 @@ class CancellableHttpCallTest {
         runCurrent()
         call.fail(expected)
         job.join()
-        assertSame(expected, actual)
+        assertFailurePreserved(expected, actual)
     }
 
     @Test fun responseBodyIsClosedWhenReadFails() = runTest {
@@ -82,8 +82,16 @@ class CancellableHttpCallTest {
         val body = TrackingLoginResponseBody("body") { throw expected }
         call.respond(body)
         job.join()
-        assertSame(expected, actual)
+        assertFailurePreserved(expected, actual)
         assertTrue(body.closed)
+    }
+
+    private fun assertFailurePreserved(expected: IOException, actual: Exception?) {
+        // Gradle enables assertions; coroutine debug stack recovery can copy the exception.
+        // Preserve the failure contract and original cause without requiring reference identity.
+        assertEquals(expected.javaClass, actual?.javaClass)
+        assertEquals(expected.message, actual?.message)
+        assertTrue(generateSequence(actual as Throwable?) { it.cause }.take(8).any { it === expected })
     }
 
     @Test fun cancellationDuringBodyReadCancelsCallAndClosesResponse() = runTest {
