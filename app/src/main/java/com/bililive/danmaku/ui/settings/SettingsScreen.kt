@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bililive.danmaku.ui.display.DisplaySettingsControls
+import com.bililive.danmaku.ui.login.EXPERIMENTAL_LOGIN_NOTICE
+import com.bililive.danmaku.ui.login.accountLoginStatusText
 import com.bililive.danmaku.BiliLiveApp
 import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.domain.repository.SettingsRepository
@@ -77,11 +79,11 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (loginState.isLoggedIn) loginState.username else "未登录",
+                            if (loginState.isLoggedIn) loginState.username.ifBlank { "已保存登录状态" } else "未登录",
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
-                            if (loginState.isLoggedIn) "已登录 · 获取完整弹幕" else "登录后可获取完整弹幕",
+                            accountLoginStatusText(settings.mockMode, loginState.isLoggedIn),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -95,7 +97,7 @@ fun SettingsScreen(
             }
 
             // 登录提示
-            if (!loginState.isLoggedIn) {
+            if (!settings.mockMode && !loginState.isLoggedIn) {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer
@@ -112,7 +114,7 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "未登录时弹幕会被B站限流，建议登录后使用",
+                            EXPERIMENTAL_LOGIN_NOTICE,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )

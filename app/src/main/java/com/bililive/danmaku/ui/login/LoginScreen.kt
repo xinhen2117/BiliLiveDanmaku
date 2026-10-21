@@ -1,7 +1,6 @@
 package com.bililive.danmaku.ui.login
 
 import android.graphics.Bitmap
-import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -26,11 +25,8 @@ import androidx.compose.ui.unit.sp
 import com.bililive.danmaku.data.remote.BiliBiliLoginManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private const val TAG = "LoginScreen"
 
 /**
  * B站登录页面
@@ -128,7 +124,7 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             if (!loginState.isLoggedIn) {
-                // ===== 限流提示 =====
+                // ===== 实验性功能提示 =====
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     modifier = Modifier.fillMaxWidth()
@@ -136,7 +132,7 @@ fun LoginScreen(
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("未登录时弹幕会被B站限流。登录后可获取完整弹幕。",
+                        Text(EXPERIMENTAL_LOGIN_NOTICE,
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                     }
                 }
@@ -175,8 +171,7 @@ fun LoginScreen(
                             loginState = loginManager.getLoginState()
                             showQRLogin = false
                             onLoginSuccess()
-                        },
-                        onError = { msg -> statusMessage = msg; isError = true }
+                        }
                     )
                 }
 
@@ -425,15 +420,12 @@ fun CookieImportSection(onImport: (String) -> Unit) {
 @Composable
 fun QRCodeLoginSection(
     loginManager: BiliBiliLoginManager,
-    onLoginSuccess: () -> Unit,
-    onError: (String) -> Unit
+    onLoginSuccess: () -> Unit
 ) {
     var qrCodeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     var generation by remember { mutableIntStateOf(0) }
     var qrcodeKey by remember { mutableStateOf("") }
-    var qrStatus by remember { mutableStateOf("loading") } // loading, ready, scanned, expired, error
-    var statusText by remember { mutableStateOf("正在生成二维码...") }
-    var isLoading by remember { mutableStateOf(true) }
+    var qrStatus by remember { mutableStateOf(QrLoginStatus.LOADING) }
 
     DisposableEffect(loginManager) {
         onDispose { loginManager.cancelQrLogin() }
@@ -441,11 +433,10 @@ fun QRCodeLoginSection(
 
     // 仅向B站申请登录链接；二维码图片在本地生成，不上传链接或缓存到磁盘。
     LaunchedEffect(loginManager, generation) {
+        val currentGeneration = generation
         qrcodeKey = ""
         qrCodeBitmap = null
-        qrStatus = "loading"
-        isLoading = true
-        statusText = "正在生成二维码..."
+        qrStatus = QrLoginStatus.LOADING
         try {
             val data = loginManager.generateQRCode().getOrThrow()
             val bitmap = withContext(Dispatchers.Default) {
@@ -454,58 +445,36 @@ fun QRCodeLoginSection(
                     qrCode.pixels, qrCode.width, qrCode.height, Bitmap.Config.ARGB_8888
                 ).asImageBitmap()
             }
+            if (generation != currentGeneration) return@LaunchedEffect
             qrCodeBitmap = bitmap
             qrcodeKey = data.qrcodeKey
-            qrStatus = "ready"
-            statusText = "请用B站App扫描二维码"
-            isLoading = false
+            qrStatus = QrLoginStatus.READY
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            qrStatus = "error"
-            statusText = "生成二维码失败，请刷新重试"
-            isLoading = false
-            onError(statusText)
+            if (generation != currentGeneration) return@LaunchedEffect
+            loginManager.cancelQrLogin()
+            qrStatus = QrLoginStatus.GENERATION_FAILED
         }
     }
 
     // 轮询二维码状态
-    LaunchedEffect(qrcodeKey) {
-        if (qrcodeKey.isNotEmpty() && (qrStatus == "ready" || qrStatus == "scanned")) {
-            while (true) {
-                delay(2000) // 每2秒轮询一次
-                val result = loginManager.pollQRCodeStatus(qrcodeKey)
-                result.fold(
-                    onSuccess = { code ->
-                        when (code) {
-                            0 -> {
-                                // 登录成功
-                                qrStatus = "success"
-                                statusText = "✅ 登录成功！"
-                                onLoginSuccess()
-                                return@LaunchedEffect
-                            }
-                            1 -> {
-                                // 未扫码，继续等待
-                            }
-                            2 -> {
-                                // 已扫码，等待确认
-                                qrStatus = "scanned"
-                                statusText = "已扫码，请在B站App中确认"
-                            }
-                            3 -> {
-                                // 二维码已过期
-                                qrStatus = "expired"
-                                statusText = "二维码已过期，请点击刷新"
-                                return@LaunchedEffect
-                            }
-                        }
-                    },
-                    onFailure = { e ->
-                        Log.w(TAG, "轮询二维码失败: ${e.message}")
-                        // 网络错误，继续重试
-                    }
-                )
+    LaunchedEffect(loginManager, generation, qrcodeKey) {
+        val currentGeneration = generation
+        val currentKey = qrcodeKey
+        if (currentKey.isEmpty() || !qrStatus.canPoll) return@LaunchedEffect
+        pollQrLogin(
+            request = { loginManager.pollQRCodeStatus(currentKey) },
+            isCurrent = {
+                generation == currentGeneration && qrcodeKey == currentKey && qrStatus.canPoll
+            }
+        ) { status ->
+            qrStatus = status
+            if (status == QrLoginStatus.SUCCESS) {
+                onLoginSuccess()
+            } else if (status.canRefresh) {
+                // 失败/过期后停止轮询并失效化旧挑战；只由用户刷新启动新的尝试。
+                loginManager.cancelQrLogin()
             }
         }
     }
@@ -528,16 +497,16 @@ fun QRCodeLoginSection(
             Spacer(modifier = Modifier.height(16.dp))
 
             // 二维码显示区域
-            if (isLoading) {
+            if (qrStatus == QrLoginStatus.LOADING) {
                 CircularProgressIndicator(modifier = Modifier.size(120.dp))
-            } else if (qrStatus == "error") {
+            } else if (qrStatus.isError) {
                 Icon(
                     Icons.Default.Error,
                     contentDescription = null,
                     modifier = Modifier.size(120.dp),
                     tint = MaterialTheme.colorScheme.error
                 )
-            } else if (qrStatus == "expired") {
+            } else if (qrStatus == QrLoginStatus.EXPIRED) {
                 Icon(
                     Icons.Default.Refresh,
                     contentDescription = null,
@@ -557,30 +526,28 @@ fun QRCodeLoginSection(
             
             // 状态提示
             Text(
-                text = statusText,
+                text = qrStatus.message,
                 fontSize = 14.sp,
-                color = when (qrStatus) {
-                    "success" -> MaterialTheme.colorScheme.primary
-                    "scanned" -> MaterialTheme.colorScheme.tertiary
-                    "expired" -> MaterialTheme.colorScheme.error
-                    "error" -> MaterialTheme.colorScheme.error
+                color = when {
+                    qrStatus == QrLoginStatus.SUCCESS -> MaterialTheme.colorScheme.primary
+                    qrStatus == QrLoginStatus.SCANNED -> MaterialTheme.colorScheme.tertiary
+                    qrStatus.canRefresh -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 textAlign = TextAlign.Center
             )
 
-            // 刷新按钮（二维码过期时显示）
-            if (qrStatus == "expired" || qrStatus == "error") {
+            // 生成失败、轮询失败、未知状态和过期都提供可见的重试入口。
+            if (qrStatus.canRefresh) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Button(
                     onClick = {
+                        if (!qrStatus.canRefresh) return@Button
                         // 先同步失效化旧挑战并取消请求，再等待重组启动新的生成任务。
                         loginManager.cancelQrLogin()
                         qrcodeKey = ""
                         qrCodeBitmap = null
-                        qrStatus = "loading"
-                        isLoading = true
-                        statusText = "正在生成二维码..."
+                        qrStatus = QrLoginStatus.LOADING
                         generation++
                     },
                     modifier = Modifier.fillMaxWidth()

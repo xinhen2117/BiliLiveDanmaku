@@ -20,3 +20,7 @@ Thumbs.db
 *.apk
 *.gz
 *.zip
+
+# Python preparation-script caches
+__pycache__/
+*.pyc
