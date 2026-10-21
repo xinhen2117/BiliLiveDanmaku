@@ -61,6 +61,17 @@ android {
     }
 }
 
+// This prerelease changes Debug output versions only; the Release DSL stays unchanged.
+// https://developer.android.com/reference/tools/gradle-api/8.2/com/android/build/api/variant/VariantOutput
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(2)
+            output.versionName.set("1.0.1-mvp-debug")
+        }
+    }
+}
+
 dependencies {
     // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2024.01.00")

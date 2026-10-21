@@ -33,9 +33,21 @@ class PublishTestPrereleaseTest(unittest.TestCase):
     def test_context_only_accepts_exact_repository_push_branch_and_sha(self):
         self.assertEqual(publisher.check_context(ENV), SHA)
         for key, value in [("GITHUB_REPOSITORY", "other/repo"), ("GITHUB_EVENT_NAME", "pull_request"),
-                           ("GITHUB_REF", "refs/heads/master"), ("GITHUB_SHA", "short")]:
+                           ("GITHUB_REF", "refs/heads/master"), ("GITHUB_REF", "refs/heads/improve/test-apk-downloads-20261021"), ("GITHUB_SHA", "short")]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 publisher.check_context({**ENV, key: value})
+
+    def test_fixed_second_tag_and_debug_version_are_required(self):
+        self.assertEqual(publisher.TAG, "test-20261021.2")
+        publisher.check_expected_version(["Version: 1.0.1-mvp-debug (2)", "Minimum SDK: 26"])
+        for information in [
+            ["Version: 1.0.0-mvp-debug (1)", "Minimum SDK: 26"],
+            ["Version: 1.0.1-mvp-debug (1)", "Minimum SDK: 26"],
+            ["Version: 1.0.1-mvp-debug (2)", "Minimum SDK: 25"],
+            ["Version: 1.0.1-mvp (2)", "Minimum SDK: 26"],
+        ]:
+            with self.subTest(information=information), self.assertRaises(ValueError):
+                publisher.check_expected_version(information)
 
     def test_wrong_tag_sha_stops_before_any_write(self):
         self.tag["object"]["sha"] = "b" * 40
@@ -89,6 +101,10 @@ class PublishTestPrereleaseTest(unittest.TestCase):
             if method == "POST" and endpoint == "releases":
                 self.assertTrue(payload["draft"])
                 self.assertTrue(payload["prerelease"])
+                self.assertEqual(payload["tag_name"], "test-20261021.2")
+                for required in ["1.0.1-mvp-debug", "versionCode 2", "200 条只交付 65 条", "600 条只保留 512 条",
+                                 "dm_v2", "WBI", "不能保证覆盖升级", "不承诺全部实时弹幕", "未经真机验证"]:
+                    self.assertIn(required, payload["body"])
                 state["release"] = copy.deepcopy(self.release)
                 return copy.deepcopy(state["release"])
             if method == "PATCH":
