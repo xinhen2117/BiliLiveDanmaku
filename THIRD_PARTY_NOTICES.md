@@ -31,7 +31,7 @@ DataStore preferences-core 1.0.0 的 JAR 还包含重命名到 `androidx.datasto
 
 OkHttp JAR 的 `okhttp3/internal/publicsuffix/NOTICE` 明确说明 `publicsuffixes.gz` 编译自 [Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat)，采用 MPL-2.0。该通知及数据保留原许可，不被根目录 MIT 声明覆盖。
 
-来源：[OkHttp 4.12.0 的通知](https://github.com/square/okhttp/blob/parent-4.12.0/okhttp/src/main/resources/okhttp3/internal/publicsuffix/NOTICE)、[上游公共后缀源数据仓库](https://github.com/publicsuffix/list)。重新分发或修改这些数据时，应按 MPL 保留通知，并保证相应版本的源代码形式可获得；不能把动态更新的列表链接当作已核实某个 APK 所含数据的精确版本。
+来源：[OkHttp 4.12.0 的通知](https://github.com/square/okhttp/blob/parent-4.12.0/okhttp/src/main/resources/okhttp3/internal/publicsuffix/NOTICE)。现已保留该版本的完整、未修改、可编辑[原始源数据](app/src/main/assets/open_source_licenses/OkHttp-4.12.0-public_suffix_list.dat)，随源码和 APK assets 一同分发，保留 MPL 头与全部原注释。其 9,499 条普通/通配规则和 8 条例外按官方生成器格式序列化后，与运行时数据的全部 115,042 字节一致；CI 对实际 APK 再核验源文件与运行时资源。固定上游提交、提取路径及 SHA-256 见[对应源说明](app/src/main/assets/open_source_licenses/OkHttp-4.12.0-PUBLIC-SUFFIX-SOURCE.md)，不依赖动态列表链接代表历史版本。升级或修改依赖时须重新核验。
 
 ## 随应用保留的许可材料
 
@@ -55,4 +55,4 @@ ZXing 的上游整体 NOTICE 原样保留，其中也列有其他模块的归属
 
 ## 发布或升级前
 
-重新导出实际解析的依赖图，检查传递组件、上游 NOTICE 和产物中保留的文本；若修改了第三方代码，应标明修改并满足相应许可证。保留必要的源代码获取途径，尤其是公共后缀数据。此清单不替代这些发布检查，也不授予 Bilibili 的名称、标识、服务或数据的额外权利。
+重新导出实际解析的依赖图，检查传递组件、上游 NOTICE 和产物中保留的文本；若修改了第三方代码，应标明修改并满足相应许可证。保留必要的源代码获取途径，公共后缀数据当前版本的源文件已随包提供，升级后须重新匹配。此清单不替代完整的发布检查，也不授予 Bilibili 的名称、标识、服务或数据的额外权利。

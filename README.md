@@ -4,6 +4,15 @@
 
 项目处于开发阶段。默认使用本地 Mock 数据，也包含直接连接 Bilibili 的实现；**不需要自建 Gateway，当前代码没有 Gateway 地址设置**。真实连接依赖 Bilibili 接口、账号状态和服务端策略，不能保证持续可用或收齐所有弹幕。
 
+## 下载与试用
+
+- **测试 APK 下载入口：[GitHub Releases](https://github.com/xinhen2117/BiliLiveDanmaku/releases)**。只把实际列有 `.apk` 附件的预发布条目视为可下载测试包；源码 ZIP 和 CI 绿色状态都不是 APK 下载链接。
+- 测试包标为 **Pre-release / Debug，未经真机验证**，不是稳定版。需要 Android 8.0 及以上；首次请保持 Mock 模式，不需要登录，也不要在测试包里使用重要账号或敏感凭据。
+- 测试包名为 `com.bililive.danmaku.debug`，桌面名称含「测试版」，与正式包分开安装、数据不互通。临时 Debug 签名可能随构建变化，**不保证覆盖升级；卸载会清除该测试包的本地设置与登录信息**。
+- 开发者也可在成功的 [Android checks](https://github.com/xinhen2117/BiliLiveDanmaku/actions/workflows/android.yml) 中下载测试 artifact（需登录 GitHub，保留 7 天）。它不是 Releases，不提供永久匿名下载承诺。
+
+下载包包含 APK、`SHA256SUMS` 和 `BUILD-INFO.txt`。来源/签名/版本检查、安装边界与反馈方式见 [测试包指南](docs/TEST_BUILDS.md)。
+
 ## 当前功能
 
 以下描述对应仓库内的实现，不代表已经完成真机或线上服务验证：
@@ -17,7 +26,7 @@
 - 设置：关键词过滤、重复弹幕折叠、保留数量（300 / 500 / 1000）、深浅色主题；使用 DataStore 保存。
 - 登录页包含互斥的扫码、短信和 Cookie 导入入口；扫码图片由设备本地生成。刷新、切换方式、退出或注销会取消相关尝试，迟到结果不能重新写入旧账号。这些流程仍需真实账号/设备验证。
 
-仓库没有随源码附带可安装 APK。本文不提供未经验证的下载包、文件大小或发布承诺；可按下面步骤自行构建 Debug APK。
+源码仓库不直接跟踪 APK。是否已有可下载附件，以 Releases 或相应 CI 运行的实际产物为准；也可按下面步骤自行构建 Debug APK。
 
 ## 从源码构建
 
@@ -60,7 +69,7 @@
    .\gradlew.bat --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
    ```
 
-成功构建后的 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`，可安装到 Android 8.0 及以上的测试设备。Debug 签名仅用于开发，不等于正式发布签名。项目当前未配置正式发布签名，不应将未签名 Release 产物当作可安装发行版。
+成功构建后的 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`，包名追加 `.debug`，版本名追加 `-debug`。Debug 签名仅用于开发，不等于正式发布签名；自行构建与 CI 构建可能使用不同证书，不能保证互相覆盖更新。项目当前未配置正式发布签名，不应将未签名 Release 产物当作可安装发行版。
 
 Wrapper 使用 Gradle 官方下载地址，并配置了发行包 SHA-256 校验；JAR 校验方法见 [CONTRIBUTING.md](CONTRIBUTING.md)。固定工具版本改善构建一致性，但不表示 APK 已达到逐字节可复现。
 
@@ -128,7 +137,7 @@ app/src/androidTest/  需要设备 / 模拟器的窗口恢复测试
 - 单元测试报告：`app/build/reports/tests/testDebugUnitTest/index.html`
 - Lint 报告：`app/build/reports/lint-results-debug.html`
 - [Android 检查工作流](.github/workflows/android.yml)在推送到 `master`、Pull Request 和手动触发时执行单元测试、Lint、Debug 构建与仪器测试 APK 编译（编译不等于运行仪器测试）。添加工作流不等于检查已经通过，应以相应提交的实际运行结果为准。
-- CI 不登录 Bilibili、不验证线上接口、不进行真机测试，也不发布或签名正式版本。
+- CI 不登录 Bilibili、不验证线上接口、不进行真机测试，也不签名正式版本。成功的同仓库构建会校验测试 APK 的包名、Debug 标记和签名，并仅保存 APK、校验值与构建说明；不会上传签名密钥或账号凭据。
 
 问题反馈、验证范围和 Wrapper 维护说明见 [贡献指南](CONTRIBUTING.md)。
 

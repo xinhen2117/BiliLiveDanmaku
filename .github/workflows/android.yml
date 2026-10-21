@@ -2,7 +2,7 @@ name: Android checks
 
 on:
   push:
-    branches: [master]
+    branches: [master, improve/test-apk-downloads-20261021]
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   debug:
+    outputs:
+      test_artifact_id: ${{ steps.test_artifact.outputs.artifact-id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -32,6 +34,9 @@ jobs:
       - name: Verify Gradle wrapper JAR
         # Published checksum: https://gradle.org/release-checksums/#v8.5
         run: echo 'd3b261c2820e9e3d8d639ed084900f11f4a86050a8f83342ade7b6bc9b0d2bdd  gradle/wrapper/gradle-wrapper.jar' | sha256sum --check
+
+      - name: Test APK preparation checks
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Install required Android SDK packages
         # The GitHub-hosted Ubuntu image supplies the Android command-line tools.
@@ -56,8 +61,73 @@ jobs:
           print(f'Verified {len(files)} license/notice assets in the debug APK')
           PY
 
+      - name: Verify exact source for packaged MPL public-suffix data
+        run: python3 scripts/verify_public_suffix_source.py app/src/main/assets/open_source_licenses/OkHttp-4.12.0-public_suffix_list.dat app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Verify and prepare isolated test APK
+        if: ${{ success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: |
+          python3 scripts/prepare_test_apk.py \
+            --apk app/build/outputs/apk/debug/app-debug.apk \
+            --aapt "$ANDROID_HOME/build-tools/34.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/34.0.0/apksigner" \
+            --destination app/build/outputs/test-apk \
+            --commit "$GITHUB_SHA" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Save test APK for 7 days (not a Release)
+        id: test_artifact
+        if: ${{ success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: BiliLiveDanmaku-test-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            app/build/outputs/test-apk/BiliLiveDanmaku-test.apk
+            app/build/outputs/test-apk/SHA256SUMS
+            app/build/outputs/test-apk/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          include-hidden-files: false
+
       - name: Show full lint diagnostics
         if: always()
         run: |
           report=app/build/intermediates/lint_intermediate_text_report/debug/lint-results-debug.txt
           if [ -f "$report" ]; then cat "$report"; fi
+
+  publish_test_prerelease:
+    # A one-time, maintainer-authorized test tag, never a general release pipeline.
+    needs: debug
+    if: ${{ github.event_name == 'push' && github.repository == 'xinhen2117/BiliLiveDanmaku' && github.ref == 'refs/heads/improve/test-apk-downloads-20261021' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require the build job's exact artifact ID
+        env:
+          TEST_ARTIFACT_ID: ${{ needs.debug.outputs.test_artifact_id }}
+        run: '[[ "$TEST_ARTIFACT_ID" =~ ^[0-9]+$ ]]'
+
+      - name: Download only this run's test artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.debug.outputs.test_artifact_id }}
+          path: test-apk
+          merge-multiple: true
+
+      - name: Install APK verification tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0"'
+
+      - name: Verify APK and publish the fixed test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/publish_test_prerelease.py
