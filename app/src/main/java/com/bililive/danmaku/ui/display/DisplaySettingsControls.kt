@@ -9,7 +9,7 @@ import androidx.compose.ui.unit.dp
 import com.bililive.danmaku.domain.model.DisplaySettings
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun DisplaySettingsControls(settings: DisplaySettings, onChange: ((DisplaySettings) -> DisplaySettings) -> Unit) {
     val safe = settings.normalized()

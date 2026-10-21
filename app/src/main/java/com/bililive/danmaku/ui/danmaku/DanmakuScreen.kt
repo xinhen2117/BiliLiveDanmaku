@@ -159,6 +159,7 @@ fun DanmakuScreen(onBack: () -> Unit, viewModel: DanmakuViewModel) {
                 }
             }) {
             val compactToolbar = DisplayPolicy.compactToolbar(maxWidth.value.toInt(), maxHeight.value.toInt())
+            val wideMessages = maxWidth >= 600.dp
             val shiftPadding = if (lowPower) DisplayPolicy.SHIFT_PADDING_DP.dp else 0.dp
             // Shift the WHOLE app-owned foreground, including labels, buttons, empty/error states.
             Column(Modifier.fillMaxSize().padding(shiftPadding).offset(offset.first.dp, offset.second.dp)
@@ -208,7 +209,7 @@ fun DanmakuScreen(onBack: () -> Unit, viewModel: DanmakuViewModel) {
                         verticalArrangement = Arrangement.spacedBy(if (display.compactRows) 2.dp else 6.dp)
                     ) {
                         items(uiState.messages, key = { it.id }, contentType = { "danmaku" }) { item ->
-                            DanmakuMessageItem(item, display, wide = maxWidth >= 600.dp, lowPower = lowPower)
+                            DanmakuMessageItem(item, display, wide = wideMessages, lowPower = lowPower)
                         }
                     }
                 }
