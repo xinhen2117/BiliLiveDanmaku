@@ -11,5 +11,6 @@ data class AppSettings(
     val highSpeedMode: Boolean = false,
     val autoReconnect: Boolean = true,
     val followSystemDarkMode: Boolean = true,
-    val darkMode: Boolean = false
+    val darkMode: Boolean = false,
+    val display: DisplaySettings = DisplaySettings()
 )

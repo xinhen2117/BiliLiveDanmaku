@@ -1,6 +1,7 @@
 package com.bililive.danmaku.ui.room
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.domain.repository.SettingsRepository
@@ -20,6 +21,17 @@ class RoomInputViewModel(
     private val settingsRepository: SettingsRepository,
     private val validateRoomIdUseCase: ValidateRoomIdUseCase
 ) : ViewModel() {
+
+    class Factory(
+        private val settingsRepository: SettingsRepository,
+        private val validateRoomIdUseCase: ValidateRoomIdUseCase
+    ) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            require(modelClass.isAssignableFrom(RoomInputViewModel::class.java))
+            return RoomInputViewModel(settingsRepository, validateRoomIdUseCase) as T
+        }
+    }
 
     private val _uiState = MutableStateFlow(RoomInputUiState())
     val uiState: StateFlow<RoomInputUiState> = _uiState.asStateFlow()

@@ -5,10 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.ui.navigation.AppNavigation
 import com.bililive.danmaku.ui.theme.BiliLiveTheme
@@ -22,7 +20,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val settings by app.settingsRepository.observeSettings()
-                .collectAsState(initial = AppSettings())
+                .collectAsStateWithLifecycle(initialValue = AppSettings())
 
             val darkTheme = if (settings.followSystemDarkMode) {
                 isSystemInDarkTheme()

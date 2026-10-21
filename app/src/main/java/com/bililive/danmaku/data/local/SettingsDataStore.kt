@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.bililive.danmaku.domain.model.DisplaySettings
 import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +28,14 @@ class SettingsDataStore(private val context: Context) : SettingsRepository {
         val AUTO_RECONNECT = booleanPreferencesKey("auto_reconnect")
         val DARK_MODE = booleanPreferencesKey("dark_mode")
         val FOLLOW_SYSTEM_DARK = booleanPreferencesKey("follow_system_dark")
+        val KEEP_SCREEN_ON = booleanPreferencesKey("display_keep_screen_on")
+        val LOW_POWER_DISPLAY = booleanPreferencesKey("display_low_power")
+        val DISPLAY_BRIGHTNESS = intPreferencesKey("display_brightness")
+        val PIXEL_SHIFT = booleanPreferencesKey("display_pixel_shift")
+        val IDLE_DIMMING = booleanPreferencesKey("display_idle_dimming")
+        val IDLE_TIMEOUT = intPreferencesKey("display_idle_timeout")
+        val DISPLAY_TEXT_SIZE = intPreferencesKey("display_text_size")
+        val COMPACT_ROWS = booleanPreferencesKey("display_compact_rows")
         val RECENT_ROOMS = stringPreferencesKey("recent_rooms")
     }
 
@@ -43,9 +52,21 @@ class SettingsDataStore(private val context: Context) : SettingsRepository {
             highSpeedMode = prefs[HIGH_SPEED_MODE] ?: false,
             autoReconnect = prefs[AUTO_RECONNECT] ?: true,
             darkMode = prefs[DARK_MODE] ?: false,
-            followSystemDarkMode = prefs[FOLLOW_SYSTEM_DARK] ?: true
+            followSystemDarkMode = prefs[FOLLOW_SYSTEM_DARK] ?: true,
+            display = prefs.readDisplaySettings()
         )
     }
+
+    private fun Preferences.readDisplaySettings() = DisplaySettings(
+        keepScreenOn = this[KEEP_SCREEN_ON] ?: true,
+        lowPowerMode = this[LOW_POWER_DISPLAY] ?: false,
+        brightnessPercent = this[DISPLAY_BRIGHTNESS] ?: 20,
+        pixelShiftEnabled = this[PIXEL_SHIFT] ?: true,
+        idleDimmingEnabled = this[IDLE_DIMMING] ?: false,
+        idleTimeoutSeconds = this[IDLE_TIMEOUT] ?: 60,
+        textSizeSp = this[DISPLAY_TEXT_SIZE] ?: 16,
+        compactRows = this[COMPACT_ROWS] ?: false
+    ).normalized()
 
     override suspend fun updateMockMode(enabled: Boolean) {
         context.dataStore.edit { it[MOCK_MODE] = enabled }
@@ -85,6 +106,22 @@ class SettingsDataStore(private val context: Context) : SettingsRepository {
 
     override suspend fun updateFollowSystemDarkMode(follow: Boolean) {
         context.dataStore.edit { it[FOLLOW_SYSTEM_DARK] = follow }
+    }
+
+    override suspend fun updateDisplaySettings(update: (DisplaySettings) -> DisplaySettings) {
+        context.dataStore.edit {
+            // Read-modify-write inside one DataStore transaction: fast controls cannot overwrite
+            // unrelated settings using an old Compose snapshot.
+            val safe = update(it.readDisplaySettings()).normalized()
+            it[KEEP_SCREEN_ON] = safe.keepScreenOn
+            it[LOW_POWER_DISPLAY] = safe.lowPowerMode
+            it[DISPLAY_BRIGHTNESS] = safe.brightnessPercent
+            it[PIXEL_SHIFT] = safe.pixelShiftEnabled
+            it[IDLE_DIMMING] = safe.idleDimmingEnabled
+            it[IDLE_TIMEOUT] = safe.idleTimeoutSeconds
+            it[DISPLAY_TEXT_SIZE] = safe.textSizeSp
+            it[COMPACT_ROWS] = safe.compactRows
+        }
     }
 
     override suspend fun getRecentRooms(): List<Long> {

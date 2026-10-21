@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -15,6 +16,7 @@ class BiliBiliApi(
 ) {
 
     private val client = OkHttpClient.Builder()
+        .followRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .apply {
@@ -44,8 +46,9 @@ class BiliBiliApi(
             .header("Referer", "https://live.bilibili.com")
             .build()
 
-        val response = client.newCall(request).execute()
-        val body = response.body?.string() ?: throw Exception("Empty response")
+        val response = client.newCall(request).awaitResponseData()
+        if (response.code !in 200..299) throw IOException("Room lookup failed")
+        val body = response.body
 
         val roomInit = json.decodeFromString<RoomInitResponse>(body)
         if (roomInit.code != 0) {
@@ -65,8 +68,9 @@ class BiliBiliApi(
             .header("Referer", "https://live.bilibili.com")
             .build()
 
-        val response = client.newCall(request).execute()
-        val body = response.body?.string() ?: throw Exception("Empty response")
+        val response = client.newCall(request).awaitResponseData()
+        if (response.code !in 200..299) throw IOException("Room details lookup failed")
+        val body = response.body
 
         val roomInfoResp = json.decodeFromString<RoomInfoResponse>(body)
         if (roomInfoResp.code != 0) {
@@ -95,8 +99,9 @@ class BiliBiliApi(
             .header("Referer", "https://live.bilibili.com")
             .build()
 
-        val response = client.newCall(request).execute()
-        val body = response.body?.string() ?: throw Exception("Empty response")
+        val response = client.newCall(request).awaitResponseData()
+        if (response.code !in 200..299) throw IOException("Danmaku configuration lookup failed")
+        val body = response.body
 
         val confResp = json.decodeFromString<DanmuConfResponse>(body)
         if (confResp.code != 0) {

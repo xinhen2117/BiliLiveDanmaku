@@ -9,7 +9,8 @@ class DanmakuErrorTest {
     fun `user message for known codes`() {
         assertEquals("请输入正确的直播间号", DanmakuError.userMessage("INVALID_ROOM_ID"))
         assertEquals("未找到该直播间，请检查房间号", DanmakuError.userMessage("ROOM_NOT_FOUND"))
-        assertEquals("网络不可用，正在等待恢复", DanmakuError.userMessage("NETWORK_ERROR"))
+        assertEquals("网络连接中断，请检查网络后重试", DanmakuError.userMessage("NETWORK_ERROR"))
+        assertEquals("连接认证被拒绝，请检查登录状态后重试", DanmakuError.userMessage("UNAUTHORIZED"))
     }
 
     @Test

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.bililive.danmaku.ui.display.DisplaySettingsControls
 import com.bililive.danmaku.BiliLiveApp
 import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.domain.repository.SettingsRepository
@@ -234,6 +235,13 @@ fun SettingsScreen(
                 }
             }
 
+            Divider()
+
+            Text("常亮与弹幕显示", style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary)
+            DisplaySettingsControls(settings.display) { updated ->
+                scope.launch { settingsRepository.updateDisplaySettings(updated) }
+            }
             Divider()
 
             // ===== Appearance Section =====

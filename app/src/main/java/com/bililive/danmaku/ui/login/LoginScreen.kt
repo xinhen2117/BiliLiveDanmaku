@@ -1,6 +1,8 @@
 package com.bililive.danmaku.ui.login
 
+import android.graphics.Bitmap
 import android.util.Log
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -12,16 +14,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.bililive.danmaku.data.remote.BiliBiliLoginManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "LoginScreen"
 
@@ -47,12 +54,19 @@ fun LoginScreen(
     var statusMessage by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
 
+    DisposableEffect(loginManager) {
+        onDispose { loginManager.cancelPendingLogin() }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("B站登录") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        loginManager.cancelPendingLogin()
+                        onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
@@ -133,7 +147,12 @@ fun LoginScreen(
                 var showQRLogin by remember { mutableStateOf(false) }
                 
                 Button(
-                    onClick = { showQRLogin = !showQRLogin; showSmsLogin = false; showCookieInput = false },
+                    onClick = {
+                        loginManager.cancelPendingLogin()
+                        showQRLogin = !showQRLogin
+                        showSmsLogin = false
+                        showCookieInput = false
+                    },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -167,7 +186,12 @@ fun LoginScreen(
 
                 // ===== 方式2: 短信验证码 =====
                 OutlinedButton(
-                    onClick = { showSmsLogin = !showSmsLogin; showCookieInput = false },
+                    onClick = {
+                        loginManager.cancelPendingLogin()
+                        showQRLogin = false
+                        showSmsLogin = !showSmsLogin
+                        showCookieInput = false
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Sms, contentDescription = null)
@@ -194,7 +218,12 @@ fun LoginScreen(
 
                 // ===== 方式3: Cookie导入 =====
                 OutlinedButton(
-                    onClick = { showCookieInput = !showCookieInput; showSmsLogin = false },
+                    onClick = {
+                        loginManager.cancelPendingLogin()
+                        showQRLogin = false
+                        showCookieInput = !showCookieInput
+                        showSmsLogin = false
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.ContentPaste, contentDescription = null)
@@ -286,7 +315,9 @@ fun SmsLoginSection(
                                 onSuccess = { codeSent = true; countdown = 60 },
                                 onFailure = { onError("发送失败: ${it.message}") }
                             )
-                        } catch (e: Throwable) {
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
                             isSending = false
                             onError("异常: ${e.message ?: e.javaClass.simpleName}")
                         }
@@ -329,7 +360,9 @@ fun SmsLoginSection(
                                     onSuccess = { onLoginSuccess() },
                                     onFailure = { onError("登录失败: ${it.message}") }
                                 )
-                            } catch (e: Throwable) {
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
                                 isLoggingIn = false
                                 onError("异常: ${e.message ?: e.javaClass.simpleName}")
                             }
@@ -395,36 +428,50 @@ fun QRCodeLoginSection(
     onLoginSuccess: () -> Unit,
     onError: (String) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
-    var qrCodeUrl by remember { mutableStateOf("") }
+    var qrCodeBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var generation by remember { mutableIntStateOf(0) }
     var qrcodeKey by remember { mutableStateOf("") }
     var qrStatus by remember { mutableStateOf("loading") } // loading, ready, scanned, expired, error
     var statusText by remember { mutableStateOf("正在生成二维码...") }
     var isLoading by remember { mutableStateOf(true) }
 
-    // 生成二维码
-    LaunchedEffect(Unit) {
-        val result = loginManager.generateQRCode()
-        result.fold(
-            onSuccess = { data ->
-                qrCodeUrl = data.url
-                qrcodeKey = data.qrcodeKey
-                qrStatus = "ready"
-                statusText = "请用B站App扫描二维码"
-                isLoading = false
-            },
-            onFailure = { e ->
-                qrStatus = "error"
-                statusText = "生成二维码失败: ${e.message}"
-                isLoading = false
-                onError("生成二维码失败: ${e.message}")
+    DisposableEffect(loginManager) {
+        onDispose { loginManager.cancelQrLogin() }
+    }
+
+    // 仅向B站申请登录链接；二维码图片在本地生成，不上传链接或缓存到磁盘。
+    LaunchedEffect(loginManager, generation) {
+        qrcodeKey = ""
+        qrCodeBitmap = null
+        qrStatus = "loading"
+        isLoading = true
+        statusText = "正在生成二维码..."
+        try {
+            val data = loginManager.generateQRCode().getOrThrow()
+            val bitmap = withContext(Dispatchers.Default) {
+                val qrCode = LoginQrCodeEncoder.encode(data.url)
+                Bitmap.createBitmap(
+                    qrCode.pixels, qrCode.width, qrCode.height, Bitmap.Config.ARGB_8888
+                ).asImageBitmap()
             }
-        )
+            qrCodeBitmap = bitmap
+            qrcodeKey = data.qrcodeKey
+            qrStatus = "ready"
+            statusText = "请用B站App扫描二维码"
+            isLoading = false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            qrStatus = "error"
+            statusText = "生成二维码失败，请刷新重试"
+            isLoading = false
+            onError(statusText)
+        }
     }
 
     // 轮询二维码状态
-    LaunchedEffect(qrcodeKey, qrStatus) {
-        if (qrcodeKey.isNotEmpty() && qrStatus == "ready" || qrStatus == "scanned") {
+    LaunchedEffect(qrcodeKey) {
+        if (qrcodeKey.isNotEmpty() && (qrStatus == "ready" || qrStatus == "scanned")) {
             while (true) {
                 delay(2000) // 每2秒轮询一次
                 val result = loginManager.pollQRCodeStatus(qrcodeKey)
@@ -497,14 +544,12 @@ fun QRCodeLoginSection(
                     modifier = Modifier.size(120.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else {
-                // 使用公共API生成二维码图片（避免本地Bitmap生成问题）
-                val qrImageUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${java.net.URLEncoder.encode(qrCodeUrl, "UTF-8")}"
-                
-                AsyncImage(
-                    model = qrImageUrl,
+            } else if (qrCodeBitmap != null) {
+                Image(
+                    bitmap = qrCodeBitmap!!,
                     contentDescription = "登录二维码",
-                    modifier = Modifier.size(200.dp)
+                    modifier = Modifier.size(200.dp),
+                    filterQuality = FilterQuality.None
                 )
             }
 
@@ -529,27 +574,14 @@ fun QRCodeLoginSection(
                 Spacer(modifier = Modifier.height(12.dp))
                 Button(
                     onClick = {
-                        // 重新生成二维码
+                        // 先同步失效化旧挑战并取消请求，再等待重组启动新的生成任务。
+                        loginManager.cancelQrLogin()
+                        qrcodeKey = ""
+                        qrCodeBitmap = null
                         qrStatus = "loading"
                         isLoading = true
                         statusText = "正在生成二维码..."
-                        scope.launch {
-                            val result = loginManager.generateQRCode()
-                            result.fold(
-                                onSuccess = { data ->
-                                    qrCodeUrl = data.url
-                                    qrcodeKey = data.qrcodeKey
-                                    qrStatus = "ready"
-                                    statusText = "请用B站App扫描二维码"
-                                    isLoading = false
-                                },
-                                onFailure = { e ->
-                                    qrStatus = "error"
-                                    statusText = "生成二维码失败: ${e.message}"
-                                    isLoading = false
-                                }
-                            )
-                        }
+                        generation++
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {

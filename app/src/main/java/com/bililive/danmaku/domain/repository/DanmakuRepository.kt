@@ -1,5 +1,6 @@
 package com.bililive.danmaku.domain.repository
 
+import com.bililive.danmaku.domain.model.DisplaySettings
 import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.domain.model.DanmakuError
 import com.bililive.danmaku.domain.model.DanmakuItem
@@ -27,6 +28,7 @@ interface SettingsRepository {
     suspend fun updateAutoReconnect(enabled: Boolean)
     suspend fun updateDarkMode(dark: Boolean)
     suspend fun updateFollowSystemDarkMode(follow: Boolean)
+    suspend fun updateDisplaySettings(update: (DisplaySettings) -> DisplaySettings)
     suspend fun getRecentRooms(): List<Long>
     suspend fun addRecentRoom(roomId: Long)
     suspend fun clearRecentRooms()

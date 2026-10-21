@@ -1,5 +1,6 @@
 package com.bililive.danmaku.ui.danmaku
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -8,8 +9,8 @@ import com.bililive.danmaku.domain.repository.DanmakuRepository
 import com.bililive.danmaku.domain.repository.SettingsRepository
 import com.bililive.danmaku.domain.usecase.ConnectRoomUseCase
 import com.bililive.danmaku.domain.usecase.DisconnectUseCase
-import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 
 class DanmakuViewModel(
     private val roomId: Long,
@@ -22,157 +23,93 @@ class DanmakuViewModel(
     private val _uiState = MutableStateFlow(DanmakuUiState(roomId = roomId))
     val uiState: StateFlow<DanmakuUiState> = _uiState.asStateFlow()
 
-    // High-performance: batch processing buffer
-    private val danmakuBuffer = mutableListOf<DanmakuItem>()
-    private val bufferLock = Any()
-
-    // Duplicate fold tracking
-    private val recentContentMap = LinkedHashMap<String, DanmakuItem>(256, 0.75f, true)
-
-    // Rate calculation
-    private val rateCounter = AtomicLong(0)
-    private var lastRateTime = System.currentTimeMillis()
-
+    // All collectors and screen callbacks are confined to Main. The socket remains independent
+    // of presentation visibility; rotation / STOP never starts a second connection.
+    private val pipeline = DanmakuMessagePipeline()
     private var settings = AppSettings()
-    private var flushJob: Job? = null
-    private var rateJob: Job? = null
+    private var latestStatus = ConnectionStatus.Idle
+    private var latestError: String? = null
+    private val presentation = DanmakuPresentationPump(
+        scope = viewModelScope,
+        nowMs = SystemClock::elapsedRealtime,
+        publish = ::publishPresentation
+    )
 
     init {
-        // Observe settings
         viewModelScope.launch {
-            settingsRepository.observeSettings().collect {
-                settings = it
+            settingsRepository.observeSettings().collect { next ->
+                val historyChanged = pipeline.updateConfiguration(
+                    DanmakuPipelineConfig(
+                        maxHistory = next.maxDanmakuCount,
+                        keywordFilterEnabled = next.keywordFilterEnabled,
+                        keywords = next.keywordFilterList,
+                        duplicateFoldEnabled = next.duplicateFoldEnabled,
+                        duplicateFoldWindowMs = next.duplicateFoldWindowMs
+                    )
+                )
+                val speedModeChanged = settings.highSpeedMode != next.highSpeedMode
+                settings = next
+                if (historyChanged || speedModeChanged) requestPresentation()
             }
         }
-
-        // Observe connection status
         viewModelScope.launch {
             danmakuRepository.observeStatus().collect { status ->
-                _uiState.update { it.copy(status = status) }
+                if (latestStatus != status) {
+                    latestStatus = status
+                    requestPresentation()
+                }
             }
         }
-
-        // Observe errors
         viewModelScope.launch {
             danmakuRepository.observeError().collect { error ->
-                _uiState.update {
-                    it.copy(errorMessage = DanmakuError.userMessage(error.code))
-                }
+                latestError = DanmakuError.userMessage(error.code)
+                requestPresentation()
             }
         }
-
-        // Observe danmaku - lightweight enqueue only
         viewModelScope.launch {
             danmakuRepository.observeDanmaku().collect { item ->
-                synchronized(bufferLock) {
-                    danmakuBuffer.add(item)
-                }
-                rateCounter.incrementAndGet()
+                if (pipeline.offer(item, SystemClock.elapsedRealtime())) requestPresentation()
             }
         }
-
-        // Start batch flush loop (every 33ms ≈ 30fps for list updates)
-        flushJob = viewModelScope.launch {
-            while (isActive) {
-                delay(33)
-                flushBuffer()
-            }
-        }
-
-        // Rate calculation (every 1 second)
-        rateJob = viewModelScope.launch {
-            while (isActive) {
-                delay(1000)
-                val now = System.currentTimeMillis()
-                val elapsed = now - lastRateTime
-                val count = rateCounter.getAndSet(0)
-                val rate = if (elapsed > 0) (count * 1000 / elapsed).toInt() else 0
-                lastRateTime = now
-                _uiState.update { it.copy(messagesPerSecond = rate) }
-            }
-        }
-
-        // Auto-connect
         connect()
     }
 
-    private fun flushBuffer() {
-        val batch: List<DanmakuItem>
-        synchronized(bufferLock) {
-            if (danmakuBuffer.isEmpty()) return
-            batch = danmakuBuffer.toList()
-            danmakuBuffer.clear()
-        }
-
-        val filtered = applyFilters(batch)
-        val folded = if (settings.duplicateFoldEnabled) applyDuplicateFold(filtered) else filtered
-
-        _uiState.update { state ->
-            val maxCount = settings.maxDanmakuCount
-            val newMessages = state.messages + folded
-            val trimmed = if (newMessages.size > maxCount) {
-                newMessages.takeLast(maxCount)
-            } else newMessages
-
-            val highSpeed = state.messagesPerSecond > 100 || trimmed.size >= maxCount
-
-            state.copy(
-                messages = trimmed,
-                totalCount = state.totalCount + batch.size,
-                unreadCount = if (!state.autoScroll) state.unreadCount + folded.size else state.unreadCount,
-                highSpeedMode = highSpeed
-            )
-        }
+    private fun requestPresentation() {
+        presentation.requestPresentation()
     }
 
-    private fun applyFilters(items: List<DanmakuItem>): List<DanmakuItem> {
-        if (!settings.keywordFilterEnabled || settings.keywordFilterList.isEmpty()) return items
-        val keywords = settings.keywordFilterList
-        return items.filter { item ->
-            keywords.none { keyword -> item.content.contains(keyword, ignoreCase = true) }
-        }
+    private fun publishPresentation(now: Long): Long? {
+        val snapshot = pipeline.drain(now)
+        _uiState.value = DanmakuUiState(
+            roomId = roomId,
+            status = latestStatus,
+            messages = snapshot.messages,
+            totalCount = snapshot.totalCount,
+            messagesPerSecond = snapshot.messagesPerSecond,
+            unreadCount = snapshot.unreadCount,
+            autoScroll = snapshot.autoScroll,
+            highSpeedMode = settings.highSpeedMode || snapshot.messagesPerSecond > 100 || snapshot.historyFull,
+            errorMessage = latestError,
+            receivedVersion = snapshot.receivedVersion,
+            overflowCount = snapshot.overflowCount
+        )
+        // At most one future idle reset; no one-second idle loop. New eligible activity postpones
+        // this deadline on its next batch. Filtered-only traffic never schedules presentation.
+        return if (snapshot.messagesPerSecond > 0) pipeline.rateExpiresAtMs else null
     }
 
-    private fun applyDuplicateFold(items: List<DanmakuItem>): List<DanmakuItem> {
-        val now = System.currentTimeMillis()
-        val windowMs = settings.duplicateFoldWindowMs
-        val result = mutableListOf<DanmakuItem>()
+    /** Called from the screen's lifecycle observer on Main, not from socket callbacks. */
+    fun setUiVisible(visible: Boolean) {
+        presentation.setVisible(visible)
+    }
 
-        for (item in items) {
-            val key = "${item.roomId}:${item.content}"
-            val existing = recentContentMap[key]
-
-            if (existing != null && (now - existing.receiveTimeMillis) < windowMs) {
-                // Fold: update count on existing in the result list
-                val lastInResult = result.lastOrNull { it.id == existing.id }
-                if (lastInResult != null) {
-                    result.remove(lastInResult)
-                    result.add(lastInResult.copy(repeatCount = lastInResult.repeatCount + 1))
-                } else {
-                    result.add(item.copy(repeatCount = existing.repeatCount + 1))
-                }
-            } else {
-                result.add(item)
-                recentContentMap[key] = item
-                // Evict old entries
-                if (recentContentMap.size > 1000) {
-                    val iterator = recentContentMap.iterator()
-                    var removed = 0
-                    while (iterator.hasNext() && removed < 200) {
-                        iterator.next()
-                        iterator.remove()
-                        removed++
-                    }
-                }
-            }
-        }
-        return result
+    /** Session presentation mode only. Does not reconnect, change filters, or persist settings. */
+    fun setLowPowerMode(enabled: Boolean) {
+        presentation.setLowPowerMode(enabled)
     }
 
     fun connect() {
-        viewModelScope.launch {
-            connectRoomUseCase(roomId)
-        }
+        viewModelScope.launch { connectRoomUseCase(roomId) }
     }
 
     fun disconnect() {
@@ -180,29 +117,31 @@ class DanmakuViewModel(
     }
 
     fun toggleAutoScroll() {
-        _uiState.update {
-            it.copy(
-                autoScroll = !it.autoScroll,
-                unreadCount = if (it.autoScroll) 0 else it.unreadCount
-            )
-        }
+        setAutoScroll(!pipeline.autoScroll)
+    }
+
+    fun setAutoScroll(enabled: Boolean) {
+        if (pipeline.setAutoScroll(enabled)) requestPresentation()
     }
 
     fun scrollToBottom() {
-        _uiState.update { it.copy(autoScroll = true, unreadCount = 0) }
+        setAutoScroll(true)
     }
 
     fun clearScreen() {
-        _uiState.update { it.copy(messages = emptyList(), totalCount = 0) }
+        // Clear both retained and not-yet-presented messages, fold anchors, unread and counters.
+        pipeline.clear()
+        requestPresentation()
     }
 
     fun dismissError() {
-        _uiState.update { it.copy(errorMessage = null) }
+        latestError = null
+        requestPresentation()
     }
 
     override fun onCleared() {
-        super.onCleared()
         disconnectUseCase()
+        super.onCleared()
     }
 
     class Factory(
@@ -220,10 +159,4 @@ class DanmakuViewModel(
             ) as T
         }
     }
-}
-
-private class AtomicLong(initial: Long) {
-    private val value = java.util.concurrent.atomic.AtomicLong(initial)
-    fun incrementAndGet() = value.incrementAndGet()
-    fun getAndSet(newValue: Long) = value.getAndSet(newValue)
 }

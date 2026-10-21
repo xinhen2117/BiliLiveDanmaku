@@ -1,25 +1,41 @@
 package com.bililive.danmaku.data.remote
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Call
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/**
- * B站登录管理器
- *
- * 方式1: 短信验证码登录（使用OkHttp，兼容性好）
- * 方式2: Cookie导入
- */
-class BiliBiliLoginManager(private val context: Context) {
-
+/** B站登录管理器。登录请求必须属于当前尝试，才可以写入账号状态。 */
+class BiliBiliLoginManager internal constructor(
+    private val prefs: SharedPreferences,
+    private val client: Call.Factory,
+    private val ioDispatcher: CoroutineDispatcher,
+    private val logWarning: (String) -> Unit = {}
+) {
+    constructor(context: Context) : this(
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE),
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .build(),
+        Dispatchers.IO,
+        { Log.w(TAG, it) }
+    )
     companion object {
         private const val TAG = "BiliLogin"
         private const val PREF_NAME = "bili_login"
@@ -32,326 +48,240 @@ class BiliBiliLoginManager(private val context: Context) {
         private const val UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     }
 
-    private val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-
-    // OkHttp 客户端 - 比 HttpURLConnection 更稳定
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(false)
-        .build()
-
-    private val JSON_MEDIA = "application/x-www-form-urlencoded".toMediaType()
+    private val attempts = LoginAttemptGuard()
+    private val profileScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     data class LoginState(val isLoggedIn: Boolean = false, val username: String = "", val uid: Long = 0)
+    data class QRCodeData(val url: String, val qrcodeKey: String)
+    private data class UserInfo(val username: String = "", val uid: Long = 0)
 
-    fun getLoginState(): LoginState {
-        val sessdata = prefs.getString(KEY_SESSDATA, "") ?: ""
-        return LoginState(
-            isLoggedIn = sessdata.isNotEmpty(),
-            username = prefs.getString(KEY_USERNAME, "") ?: "",
+    fun getLoginState(): LoginState = attempts.read {
+        LoginState(
+            isLoggedIn = !prefs.getString(KEY_SESSDATA, "").isNullOrEmpty(),
+            username = prefs.getString(KEY_USERNAME, "").orEmpty(),
             uid = prefs.getLong(KEY_UID, 0)
         )
     }
 
-    /**
-     * 发送短信验证码
-     */
-    suspend fun sendSmsCode(phone: String): Result<Unit> {
-        return withContext(Dispatchers.IO) {
-            try {
-                // 1. 获取GEETEST验证码
-                val captcha = getCaptcha()
-                val token = captcha?.optString("token") ?: ""
-                val challenge = captcha?.optString("challenge") ?: ""
-                val validate = captcha?.optString("validate") ?: ""
-                val seccode = captcha?.optString("seccode") ?: ""
-
-                // 2. 发送验证码
-                val body = buildString {
-                    append("cid=86&tel=$phone")
-                    if (token.isNotEmpty()) {
-                        append("&token=$token&challenge=$challenge&validate=$validate&seccode=$seccode")
-                    }
+    suspend fun sendSmsCode(phone: String): Result<Unit> = withContext(ioDispatcher) {
+        try {
+            val captcha = getCaptcha()
+            val body = FormBody.Builder().add("cid", "86").add("tel", phone)
+            if (!captcha?.optString("token").isNullOrEmpty()) {
+                for (key in listOf("token", "challenge", "validate", "seccode")) {
+                    body.add(key, captcha?.optString(key).orEmpty())
                 }
-
-                val request = Request.Builder()
-                    .url("https://passport.bilibili.com/x/passport-login/web/sms/send")
-                    .post(body.toRequestBody(JSON_MEDIA))
-                    .header("User-Agent", UA)
-                    .header("Referer", "https://www.bilibili.com")
-                    .build()
-
-                val response = client.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
-                response.close()
-
-                val json = JSONObject(responseBody)
-                val code = json.optInt("code", -1)
-                Log.d(TAG, "发送验证码: code=$code msg=${json.optString("message")}")
-
-                if (code == 0) Result.success(Unit)
-                else Result.failure(Exception(json.optString("message", "错误码: $code")))
-            } catch (e: Throwable) {
-                Log.e(TAG, "发送验证码异常", e)
-                Result.failure(Exception("网络错误: ${e.message ?: e.javaClass.simpleName}"))
             }
+            val response = client.newCall(passportRequest("sms/send").post(body.build()).build())
+                .awaitResponseData()
+            val json = response.json()
+            val code = json.optInt("code", -1)
+            if (code == 0) Result.success(Unit)
+            else Result.failure(Exception(json.optString("message", "发送失败: $code")))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            Result.failure(Exception("网络请求失败，请稍后重试"))
         }
     }
 
-    /**
-     * 短信验证码登录
-     */
-    suspend fun loginWithSms(phone: String, code: String): Result<Unit> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val body = "cid=86&tel=$phone&code=$code"
-
-                val request = Request.Builder()
-                    .url("https://passport.bilibili.com/x/passport-login/web/login/sms")
-                    .post(body.toRequestBody(JSON_MEDIA))
-                    .header("User-Agent", UA)
-                    .header("Referer", "https://www.bilibili.com")
-                    .build()
-
-                val response = client.newCall(request).execute()
-
-                // 提取Set-Cookie
-                val cookies = mutableMapOf<String, String>()
-                response.headers("Set-Cookie").forEach { raw ->
-                    val parts = raw.split(";")[0].split("=", limit = 2)
-                    if (parts.size == 2) cookies[parts[0].trim()] = parts[1].trim()
-                }
-
-                val responseBody = response.body?.string() ?: ""
-                response.close()
-
-                val json = JSONObject(responseBody)
-                val respCode = json.optInt("code", -1)
-                Log.d(TAG, "登录结果: code=$respCode cookies=${cookies.keys}")
-
-                if (respCode == 0) {
-                    val sessdata = cookies["SESSDATA"] ?: ""
-                    if (sessdata.isNotEmpty()) {
-                        saveLoginCookies(sessdata, cookies["bili_jct"] ?: "",
-                            cookies["DedeUserID"] ?: "", cookies["DedeUserID__ckMd5"] ?: "")
-                        fetchUserInfo(sessdata)
-                        Result.success(Unit)
-                    } else {
-                        Result.failure(Exception("登录成功但未获取到Cookie"))
-                    }
-                } else {
-                    Result.failure(Exception(json.optString("message", "登录失败: $respCode")))
-                }
-            } catch (e: Throwable) {
-                Log.e(TAG, "登录异常", e)
-                Result.failure(Exception("网络错误: ${e.message ?: e.javaClass.simpleName}"))
+    suspend fun loginWithSms(phone: String, code: String): Result<Unit> = withContext(ioDispatcher) {
+        val attempt = attempts.begin(LoginAttemptGuard.Kind.SMS)
+        try {
+            val body = FormBody.Builder().add("cid", "86").add("tel", phone).add("code", code).build()
+            val response = attempts.execute(attempt, client.newCall(
+                passportRequest("login/sms").post(body).build()
+            ))
+            val json = response.json()
+            val resultCode = json.optInt("code", -1)
+            if (resultCode == 0) {
+                completeLogin(attempt, response.cookies())
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(json.optString("message", "登录失败: $resultCode")))
             }
+        } catch (e: CancellationException) {
+            attempts.cancel(attempt)
+            throw e
+        } catch (_: Exception) {
+            Result.failure(Exception("登录失败，请检查网络或重试"))
         }
     }
 
-    /**
-     * 获取GEETEST验证码
-     */
-    private fun getCaptcha(): JSONObject? {
+    private suspend fun getCaptcha(): JSONObject? {
         return try {
             val request = Request.Builder()
                 .url("https://passport.bilibili.com/x/passport-login/captcha")
                 .header("User-Agent", UA)
                 .build()
-
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
-            response.close()
-
-            val json = JSONObject(body)
-            if (json.optInt("code") == 0) json.optJSONObject("data") else null
-        } catch (e: Exception) {
-            Log.w(TAG, "获取验证码失败: ${e.message}")
+            val json = client.newCall(request).awaitResponseData().json()
+            if (json.optInt("code", -1) == 0) json.optJSONObject("data") else null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
             null
         }
     }
 
-    /**
-     * Cookie导入
-     */
     fun loginWithCookieString(cookieString: String): Boolean {
+        val cookies = parseCookies(cookieString.split(";"))
+        val sessdata = cookies["SESSDATA"].orEmpty()
+        if (sessdata.isEmpty()) return false
+        val attempt = attempts.begin(LoginAttemptGuard.Kind.COOKIE)
         return try {
-            val cookies = mutableMapOf<String, String>()
-            cookieString.split(";").forEach { part ->
-                val kv = part.trim().split("=", limit = 2)
-                if (kv.size == 2) cookies[kv[0].trim()] = kv[1].trim()
+            attempts.withCurrent(attempt) { saveLogin(cookies, UserInfo()) }
+            profileScope.launch {
+                try {
+                    val info = fetchUserInfo(attempt, sessdata)
+                    attempts.withCurrent(attempt, currentCoroutineContext()) {
+                        prefs.edit().putString(KEY_USERNAME, info.username).putLong(KEY_UID, info.uid).apply()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    logWarning("保存用户信息失败")
+                }
             }
-            val sessdata = cookies["SESSDATA"] ?: ""
-            if (sessdata.isEmpty()) return false
-
-            saveLoginCookies(sessdata, cookies["bili_jct"] ?: "",
-                cookies["DedeUserID"] ?: "", cookies["DedeUserID__ckMd5"] ?: "")
-
-            CoroutineScope(Dispatchers.IO).launch { fetchUserInfo(sessdata) }
             true
-        } catch (e: Exception) {
-            Log.e(TAG, "Cookie导入失败", e)
+        } catch (_: Exception) {
             false
         }
     }
 
-    // ===== 二维码登录 =====
-
-    data class QRCodeData(val url: String, val qrcodeKey: String)
-
-    /**
-     * 生成二维码
-     * B站API: https://passport.bilibili.com/x/passport-login/web/qrcode/generate
-     */
-    suspend fun generateQRCode(): Result<QRCodeData> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url("https://passport.bilibili.com/x/passport-login/web/qrcode/generate")
-                    .header("User-Agent", UA)
-                    .header("Referer", "https://www.bilibili.com")
-                    .build()
-
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: ""
-                response.close()
-
-                val json = JSONObject(body)
-                val code = json.optInt("code", -1)
-                Log.d(TAG, "生成二维码: code=$code")
-
-                if (code == 0) {
-                    val data = json.getJSONObject("data")
-                    val url = data.getString("url")
-                    val qrcodeKey = data.getString("qrcode_key")
-                    Result.success(QRCodeData(url, qrcodeKey))
-                } else {
-                    Result.failure(Exception(json.optString("message", "生成二维码失败")))
-                }
-            } catch (e: Throwable) {
-                Log.e(TAG, "生成二维码异常", e)
-                Result.failure(Exception("网络错误: ${e.message ?: e.javaClass.simpleName}"))
+    suspend fun generateQRCode(): Result<QRCodeData> = withContext(ioDispatcher) {
+        val attempt = attempts.begin(LoginAttemptGuard.Kind.QR)
+        try {
+            val response = attempts.execute(attempt, client.newCall(passportRequest("qrcode/generate").build()))
+            val json = response.json()
+            if (json.optInt("code", -1) != 0) {
+                attempts.cancel(attempt)
+                Result.failure(Exception(json.optString("message", "生成二维码失败")))
+            } else {
+                val data = json.getJSONObject("data")
+                val qrCode = QRCodeData(data.getString("url"), data.getString("qrcode_key"))
+                require(qrCode.url.isNotBlank() && qrCode.qrcodeKey.isNotBlank())
+                attempts.bindQrKey(attempt, qrCode.qrcodeKey, currentCoroutineContext())
+                Result.success(qrCode)
             }
+        } catch (e: CancellationException) {
+            attempts.cancel(attempt)
+            throw e
+        } catch (_: Exception) {
+            attempts.cancel(attempt)
+            Result.failure(Exception("生成二维码失败，请检查网络或重试"))
         }
     }
 
-    /**
-     * 轮询二维码状态
-     * B站API: https://passport.bilibili.com/x/passport-login/web/qrcode/poll
-     *
-     * 返回值:
-     * - code=0, data.code=0: 登录成功，Cookie在Set-Cookie中
-     * - code=0, data.code=86101: 未扫码
-     * - code=0, data.code=86090: 已扫码，等待确认
-     * - code=0, data.code=86038: 二维码已过期
-     */
-    suspend fun pollQRCodeStatus(qrcodeKey: String): Result<Int> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=$qrcodeKey")
-                    .header("User-Agent", UA)
-                    .header("Referer", "https://www.bilibili.com")
-                    .build()
-
-                val response = client.newCall(request).execute()
-
-                // 提取Set-Cookie（登录成功时会返回）
-                val cookies = mutableMapOf<String, String>()
-                response.headers("Set-Cookie").forEach { raw ->
-                    val parts = raw.split(";")[0].split("=", limit = 2)
-                    if (parts.size == 2) cookies[parts[0].trim()] = parts[1].trim()
-                }
-
-                val responseBody = response.body?.string() ?: ""
-                response.close()
-
-                val json = JSONObject(responseBody)
-                val code = json.optInt("code", -1)
-                val data = json.optJSONObject("data")
-                val dataCode = data?.optInt("code", -1) ?: -1
-                Log.d(TAG, "二维码轮询: code=$code dataCode=$dataCode cookies=${cookies.keys}")
-
-                if (code == 0 && dataCode == 0) {
-                    // 登录成功
-                    val sessdata = cookies["SESSDATA"] ?: ""
-                    if (sessdata.isNotEmpty()) {
-                        saveLoginCookies(sessdata, cookies["bili_jct"] ?: "",
-                            cookies["DedeUserID"] ?: "", cookies["DedeUserID__ckMd5"] ?: "")
-                        fetchUserInfo(sessdata)
-                        Result.success(0) // 登录成功
-                    } else {
-                        Result.failure(Exception("登录成功但未获取到Cookie"))
+    /** 0: 登录成功，1: 未扫码，2: 待确认，3: 已过期。旧二维码不可恢复登录。 */
+    suspend fun pollQRCodeStatus(qrcodeKey: String): Result<Int> = withContext(ioDispatcher) {
+        val attempt = attempts.qrAttempt(qrcodeKey)
+        try {
+            val url = okhttp3.HttpUrl.Builder()
+                .scheme("https").host("passport.bilibili.com")
+                .addPathSegments("x/passport-login/web/qrcode/poll")
+                .addQueryParameter("qrcode_key", qrcodeKey)
+                .build()
+            val request = Request.Builder().url(url).header("User-Agent", UA)
+                .header("Referer", "https://www.bilibili.com").build()
+            val response = attempts.execute(attempt, client.newCall(request))
+            val json = response.json()
+            if (json.optInt("code", -1) != 0) {
+                Result.failure(Exception("二维码状态请求失败"))
+            } else {
+                when (json.optJSONObject("data")?.optInt("code", -1)) {
+                    0 -> {
+                        completeLogin(attempt, response.cookies())
+                        Result.success(0)
                     }
-                } else if (dataCode == 86101) {
-                    Result.success(1) // 未扫码
-                } else if (dataCode == 86090) {
-                    Result.success(2) // 已扫码，等待确认
-                } else if (dataCode == 86038) {
-                    Result.success(3) // 二维码已过期
-                } else {
-                    Result.failure(Exception("未知状态: $dataCode"))
+                    86101 -> Result.success(1)
+                    86090 -> Result.success(2)
+                    86038 -> {
+                        attempts.cancel(attempt)
+                        Result.success(3)
+                    }
+                    else -> Result.failure(Exception("未知二维码状态"))
                 }
-            } catch (e: Throwable) {
-                Log.e(TAG, "轮询二维码异常", e)
-                Result.failure(Exception("网络错误: ${e.message ?: e.javaClass.simpleName}"))
             }
+        } catch (e: CancellationException) {
+            attempts.cancel(attempt)
+            throw e
+        } catch (_: Exception) {
+            Result.failure(Exception("二维码状态请求失败，请稍后重试"))
         }
     }
 
-    private suspend fun fetchUserInfo(sessdata: String) {
-        withContext(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url("https://api.bilibili.com/x/web-interface/nav")
-                    .header("User-Agent", UA)
-                    .header("Cookie", "SESSDATA=$sessdata")
-                    .build()
+    /** Call synchronously before changing QR UI state; do not wait for recomposition cancellation. */
+    fun cancelQrLogin() = attempts.cancelQr()
 
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: ""
-                response.close()
+    /** Abandon interactive QR/SMS login without interrupting an already imported account. */
+    fun cancelPendingLogin() = attempts.cancelInteractive()
 
-                val json = JSONObject(body)
-                if (json.optInt("code") == 0) {
-                    val data = json.getJSONObject("data")
-                    val uname = data.optString("uname", "")
-                    val uid = data.optLong("uid", 0)
-                    Log.d(TAG, "用户: $uname (uid=$uid)")
-                    prefs.edit().putString(KEY_USERNAME, uname).putLong(KEY_UID, uid).apply()
-                } else {
-                    Log.w(TAG, "获取用户信息: code=${json.optInt("code")}")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "获取用户信息失败: ${e.message}")
-            }
+    private suspend fun completeLogin(attempt: LoginAttemptGuard.Attempt, cookies: Map<String, String>) {
+        val sessdata = cookies["SESSDATA"].orEmpty()
+        require(sessdata.isNotEmpty()) { "登录成功但未获取到Cookie" }
+        // 先完成可能被取消的网络请求，再一次性提交；中途退出不留下半完成的登录。
+        val info = fetchUserInfo(attempt, sessdata)
+        attempts.withCurrent(attempt, currentCoroutineContext()) { saveLogin(cookies, info) }
+    }
+
+    private suspend fun fetchUserInfo(attempt: LoginAttemptGuard.Attempt, sessdata: String): UserInfo {
+        return try {
+            val request = Request.Builder().url("https://api.bilibili.com/x/web-interface/nav")
+                .header("User-Agent", UA).header("Cookie", "SESSDATA=$sessdata").build()
+            val json = attempts.execute(attempt, client.newCall(request)).json()
+            if (json.optInt("code", -1) == 0) {
+                val data = json.getJSONObject("data")
+                UserInfo(data.optString("uname", ""), data.optLong("mid", data.optLong("uid", 0)))
+            } else UserInfo()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // A profile failure is non-fatal; do not log response bodies, session values or names.
+            logWarning("获取用户信息失败")
+            UserInfo()
         }
     }
 
-    private fun saveLoginCookies(sessdata: String, biliJct: String, dedeUserId: String, dedeUserIdMd5: String) {
+    /** Must only run inside attempts.withCurrent, including the profile reset on account change. */
+    private fun saveLogin(cookies: Map<String, String>, info: UserInfo) {
         prefs.edit()
-            .putString(KEY_SESSDATA, sessdata)
-            .putString(KEY_BILI_JCT, biliJct)
-            .putString(KEY_DEDE_USER_ID, dedeUserId)
-            .putString(KEY_DEDE_USER_ID_MD5, dedeUserIdMd5)
+            .putString(KEY_SESSDATA, cookies["SESSDATA"].orEmpty())
+            .putString(KEY_BILI_JCT, cookies["bili_jct"].orEmpty())
+            .putString(KEY_DEDE_USER_ID, cookies["DedeUserID"].orEmpty())
+            .putString(KEY_DEDE_USER_ID_MD5, cookies["DedeUserID__ckMd5"].orEmpty())
+            .putString(KEY_USERNAME, info.username)
+            .putLong(KEY_UID, info.uid)
             .apply()
     }
 
-    fun getLoginCookieString(): String {
-        val parts = mutableListOf<String>()
-        prefs.getString(KEY_SESSDATA, "")?.takeIf { it.isNotEmpty() }?.let { parts.add("SESSDATA=$it") }
-        prefs.getString(KEY_BILI_JCT, "")?.takeIf { it.isNotEmpty() }?.let { parts.add("bili_jct=$it") }
-        prefs.getString(KEY_DEDE_USER_ID, "")?.takeIf { it.isNotEmpty() }?.let { parts.add("DedeUserID=$it") }
-        prefs.getString(KEY_DEDE_USER_ID_MD5, "")?.takeIf { it.isNotEmpty() }?.let { parts.add("DedeUserID__ckMd5=$it") }
-        return if (parts.isNotEmpty()) parts.joinToString("; ") else ""
+    fun getLoginCookieString(): String = attempts.read {
+        val snapshot = prefs.all
+        listOf(
+            "SESSDATA" to KEY_SESSDATA, "bili_jct" to KEY_BILI_JCT,
+            "DedeUserID" to KEY_DEDE_USER_ID, "DedeUserID__ckMd5" to KEY_DEDE_USER_ID_MD5
+        ).mapNotNull { (name, key) ->
+            (snapshot[key] as? String)?.takeIf(String::isNotEmpty)?.let { "$name=$it" }
+        }.joinToString("; ")
     }
 
-    fun getSessdata(): String = prefs.getString(KEY_SESSDATA, "") ?: ""
-    fun isLoggedIn(): Boolean = (prefs.getString(KEY_SESSDATA, "") ?: "").isNotEmpty()
+    fun getSessdata(): String = attempts.read { prefs.getString(KEY_SESSDATA, "").orEmpty() }
+    fun isLoggedIn(): Boolean = getSessdata().isNotEmpty()
+    fun logout() = attempts.logout { prefs.edit().clear().apply() }
 
-    fun logout() {
-        prefs.edit().clear().apply()
+    private fun passportRequest(path: String): Request.Builder = Request.Builder()
+        .url("https://passport.bilibili.com/x/passport-login/web/$path")
+        .header("User-Agent", UA).header("Referer", "https://www.bilibili.com")
+
+    private fun HttpResponseData.json(): JSONObject {
+        check(code in 200..299) { "HTTP request failed" }
+        return JSONObject(body)
     }
+
+    private fun HttpResponseData.cookies(): Map<String, String> =
+        parseCookies(headers.values("Set-Cookie").map { it.substringBefore(';') })
+
+    private fun parseCookies(parts: List<String>): Map<String, String> = parts.mapNotNull { part ->
+        val pair = part.trim().split("=", limit = 2)
+        if (pair.size == 2) pair[0].trim() to pair[1].trim() else null
+    }.toMap()
 }

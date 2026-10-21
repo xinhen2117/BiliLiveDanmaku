@@ -1,0 +1,63 @@
+name: Android checks
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify Gradle wrapper JAR
+        # Published checksum: https://gradle.org/release-checksums/#v8.5
+        run: echo 'd3b261c2820e9e3d8d639ed084900f11f4a86050a8f83342ade7b6bc9b0d2bdd  gradle/wrapper/gradle-wrapper.jar' | sha256sum --check
+
+      - name: Install required Android SDK packages
+        # The GitHub-hosted Ubuntu image supplies the Android command-line tools.
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"'
+
+      - name: Run unit tests, lint and compile debug/test APKs
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Verify packaged license texts
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          source = Path('app/src/main/assets/open_source_licenses')
+          files = sorted(source.iterdir())
+          assert files, 'License assets must not be empty'
+          assert (source / 'PROJECT-MIT.txt').read_bytes() == Path('LICENSE').read_bytes()
+          with ZipFile('app/build/outputs/apk/debug/app-debug.apk') as apk:
+              for file in files:
+                  assert apk.read(f'assets/open_source_licenses/{file.name}') == file.read_bytes(), file.name
+          print(f'Verified {len(files)} license/notice assets in the debug APK')
+          PY
+
+      - name: Show full lint diagnostics
+        if: always()
+        run: |
+          report=app/build/intermediates/lint_intermediate_text_report/debug/lint-results-debug.txt
+          if [ -f "$report" ]; then cat "$report"; fi

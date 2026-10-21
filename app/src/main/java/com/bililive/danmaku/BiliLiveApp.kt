@@ -3,6 +3,7 @@ package com.bililive.danmaku
 import android.app.Application
 import com.bililive.danmaku.data.local.SettingsDataStore
 import com.bililive.danmaku.data.remote.BiliBiliApi
+import com.bililive.danmaku.data.remote.BiliBiliConnectionSource
 import com.bililive.danmaku.data.remote.BiliBiliCookieJar
 import com.bililive.danmaku.data.remote.BiliBiliLoginManager
 import com.bililive.danmaku.data.remote.DanmakuWebSocketClient
@@ -16,6 +17,8 @@ import com.bililive.danmaku.domain.usecase.ValidateRoomIdUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 class BiliLiveApp : Application() {
 
@@ -49,7 +52,15 @@ class BiliLiveApp : Application() {
         val bilibiliApi = BiliBiliApi(cookieJar)
 
         // 创建 WebSocket 客户端（带 Cookie + Token + 登录信息）
-        val webSocketClient = DanmakuWebSocketClient(bilibiliApi, cookieJar, loginManager)
+        val webSocketClient = DanmakuWebSocketClient(
+            BiliBiliConnectionSource(bilibiliApi, cookieJar, loginManager),
+            OkHttpClient.Builder().cookieJar(cookieJar)
+                .followRedirects(false)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(15, TimeUnit.SECONDS)
+                .build()
+        )
         val mockDataSource = MockDanmakuDataSource()
 
         danmakuRepository = DanmakuRepositoryImpl(

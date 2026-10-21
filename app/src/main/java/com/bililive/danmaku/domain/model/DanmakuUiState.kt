@@ -9,5 +9,9 @@ data class DanmakuUiState(
     val unreadCount: Int = 0,
     val autoScroll: Boolean = true,
     val highSpeedMode: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    // Accepted arrival generation, independent of retained list size and duplicate folding.
+    val receivedVersion: Long = 0L,
+    // Messages dropped by pending/count or retained-text limits, not normal history-count expiry.
+    val overflowCount: Long = 0L
 )
