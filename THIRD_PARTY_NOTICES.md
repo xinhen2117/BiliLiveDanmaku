@@ -13,6 +13,12 @@
 
 ## 运行时依赖：已检查的版本与例外
 
+### dm_v2 协议字段参考
+
+`DanmakuV2Decoder.kt` 是本项目独立编写的有界最小解码器；所用 `EventDm`、`EventDmUser`、`EventDmMedal` 字段编号及类型参考 [Akegarasu/blivedm-go 的 events.proto](https://github.com/Akegarasu/blivedm-go/blob/957b543d2bfa8c2ac8a7af2fb42ae73eb92443b2/pb/events.proto)。该来源采用 MIT，`Copyright (c) 2022 秋葉杏`。完整、未修改的[上游许可](app/src/main/assets/open_source_licenses/Blivedm-Go-MIT.txt)随源码及 APK assets 分发。未复制该库生成的 protobuf 运行时，也未新增 protobuf 依赖；不能将该协议参考材料的归属替换成本项目作者。
+
+仅实现正文及用户/勋章的必要字段。该非官方协议会变化，不承诺覆盖所有事件或服务器全量下发。
+
 | 组件 / 声明版本 | 上游许可与来源 |
 | --- | --- |
 | Compose BOM 2024.01.00；UI、graphics、tooling-preview、material-icons-extended 1.6.0；Material3 1.1.2 | Apache-2.0；[官方 BOM/POM](https://dl.google.com/dl/android/maven2/androidx/compose/compose-bom/2024.01.00/compose-bom-2024.01.00.pom)、[AndroidX 源码](https://android.googlesource.com/platform/frameworks/support/) |

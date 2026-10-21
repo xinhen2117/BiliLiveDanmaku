@@ -43,7 +43,7 @@ class BiliBiliProtocolTest {
         val body = Json.parseToJsonElement(auth.copyOfRange(16, auth.size).decodeToString()).jsonObject
         assertEquals(12345L, body.getValue("roomid").jsonPrimitive.long)
         assertEquals(42L, body.getValue("uid").jsonPrimitive.long)
-        assertEquals(2, body.getValue("protover").jsonPrimitive.int)
+        assertEquals(3, body.getValue("protover").jsonPrimitive.int)
         assertEquals("a\"b", body.getValue("key").jsonPrimitive.content)
         assertEquals("buvid", body.getValue("buvid").jsonPrimitive.content)
     }

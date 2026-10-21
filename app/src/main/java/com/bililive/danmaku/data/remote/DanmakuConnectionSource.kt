@@ -13,5 +13,11 @@ internal data class DanmakuConnection(
     val realRoomId: Long,
     val token: String = "",
     val buvid: String = "",
-    val uid: Long = 0
-)
+    val uid: Long = 0,
+    val alternateRequests: List<Request> = emptyList()
+) {
+    fun forAttempt(attempt: Long): DanmakuConnection {
+        val requests = listOf(request) + alternateRequests
+        return copy(request = requests[(attempt % requests.size).toInt()])
+    }
+}

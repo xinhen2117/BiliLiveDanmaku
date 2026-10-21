@@ -12,6 +12,8 @@ data class DanmakuUiState(
     val errorMessage: String? = null,
     // Accepted arrival generation, independent of retained list size and duplicate folding.
     val receivedVersion: Long = 0L,
-    // Messages dropped by pending/count or retained-text limits, not normal history-count expiry.
-    val overflowCount: Long = 0L
+    // Display text-budget losses only; transport loss and normal history expiry are separate.
+    val overflowCount: Long = 0L,
+    val presentationDiagnostics: PresentationDiagnostics = PresentationDiagnostics(),
+    val transportDiagnostics: TransportDiagnostics = TransportDiagnostics()
 )

@@ -16,7 +16,7 @@ class DanmakuPresentationPumpTest {
         val pipeline = DanmakuMessagePipeline()
         val published = mutableListOf<Pair<Long, Int>>()
         val pump = DanmakuPresentationPump(backgroundScope, { testScheduler.currentTime }) { now ->
-            val snapshot = pipeline.drain(now)
+            val snapshot = pipeline.snapshot(now)
             published.add(now to snapshot.messagesPerSecond)
             if (snapshot.messagesPerSecond > 0) pipeline.rateExpiresAtMs else null
         }
@@ -37,7 +37,7 @@ class DanmakuPresentationPumpTest {
         val pipeline = DanmakuMessagePipeline()
         val times = mutableListOf<Long>()
         val pump = DanmakuPresentationPump(backgroundScope, { testScheduler.currentTime }) { now ->
-            pipeline.drain(now)
+            pipeline.snapshot(now)
             times.add(now)
             pipeline.rateExpiresAtMs
         }
@@ -50,14 +50,14 @@ class DanmakuPresentationPumpTest {
             advanceTimeBy(1)
         }
         assertEquals(listOf(0L, 250L, 500L, 750L), times)
-        assertEquals(249, pipeline.pendingCount)
+        assertEquals(1000, pipeline.historyCount)
     }
 
     @Test fun `hidden screen interrupts timer and resumes latest backlog without intermediate publishes`() = runTest {
-        val pipeline = DanmakuMessagePipeline(pendingCapacity = 3)
+        val pipeline = DanmakuMessagePipeline(DanmakuPipelineConfig(maxHistory = 1000, duplicateFoldEnabled = false))
         val snapshots = mutableListOf<DanmakuPresentation>()
         val pump = DanmakuPresentationPump(backgroundScope, { testScheduler.currentTime }) { now ->
-            val snapshot = pipeline.drain(now)
+            val snapshot = pipeline.snapshot(now)
             snapshots.add(snapshot)
             if (snapshot.messagesPerSecond > 0) pipeline.rateExpiresAtMs else null
         }
@@ -65,19 +65,27 @@ class DanmakuPresentationPumpTest {
         runCurrent()
         pump.setVisible(false)
         runCurrent()
-        repeat(20) {
+        repeat(600) {
             pipeline.offer(item(it), testScheduler.currentTime)
             pump.requestPresentation()
             advanceTimeBy(100)
         }
         runCurrent()
         assertEquals(1, snapshots.size)
-        assertEquals(3, pipeline.pendingCount)
+        assertEquals(600, pipeline.historyCount)
+        // Let rate expire while still hidden: resume should publish one snapshot, not replay batches.
+        advanceTimeBy(2000)
+        runCurrent()
+        assertEquals(1, snapshots.size)
         pump.setVisible(true)
         runCurrent()
         assertEquals(2, snapshots.size)
-        assertEquals(listOf("17", "18", "19"), snapshots.last().messages.map { it.id })
-        assertEquals(17L, snapshots.last().overflowCount)
+        assertEquals((0..599).map(Int::toString), snapshots.last().messages.map { it.id })
+        assertEquals(0L, snapshots.last().overflowCount)
+        assertEquals(0L, snapshots.last().diagnostics.historyEvictedRows)
+        advanceTimeBy(3_600_000)
+        runCurrent()
+        assertEquals(2, snapshots.size)
     }
 
     @Test fun `filtered only traffic does not wake or publish a visible idle screen`() = runTest {
@@ -86,7 +94,7 @@ class DanmakuPresentationPumpTest {
         ))
         var publicationCount = 0
         val pump = DanmakuPresentationPump(backgroundScope, { testScheduler.currentTime }) { now ->
-            pipeline.drain(now)
+            pipeline.snapshot(now)
             publicationCount++
             null
         }
@@ -98,7 +106,7 @@ class DanmakuPresentationPumpTest {
         }
         runCurrent()
         assertEquals(1, publicationCount)
-        assertEquals(0, pipeline.pendingCount)
+        assertEquals(0, pipeline.historyCount)
     }
 
     @Test fun `mode changes interrupt pending wait and use the new interval`() = runTest {
@@ -121,11 +129,11 @@ class DanmakuPresentationPumpTest {
         assertEquals(listOf(0L, 50L), times)
     }
 
-    @Test fun `clear during pending batch cannot resurrect old messages`() = runTest {
+    @Test fun `clear before scheduled snapshot cannot resurrect old messages`() = runTest {
         val pipeline = DanmakuMessagePipeline()
         val snapshots = mutableListOf<DanmakuPresentation>()
         val pump = DanmakuPresentationPump(backgroundScope, { testScheduler.currentTime }) { now ->
-            val snapshot = pipeline.drain(now)
+            val snapshot = pipeline.snapshot(now)
             snapshots.add(snapshot)
             if (snapshot.messagesPerSecond > 0) pipeline.rateExpiresAtMs else null
         }

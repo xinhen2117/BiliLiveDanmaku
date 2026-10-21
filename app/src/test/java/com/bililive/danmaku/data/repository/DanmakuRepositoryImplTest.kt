@@ -29,7 +29,7 @@ class DanmakuRepositoryImplTest {
         val source = object : DanmakuConnectionSource {
             override suspend fun resolve(roomId: Long): DanmakuConnection { attempts++; throw IOException("test") }
         }
-        val client = DanmakuWebSocketClient(source)
+        val client = DanmakuWebSocketClient(source, dispatcher = StandardTestDispatcher(testScheduler))
         val state = MutableStateFlow(AppSettings(mockMode = false, autoReconnect = false))
         val repository = DanmakuRepositoryImpl(client, MockDanmakuDataSource(), settings(state), backgroundScope)
         repository.connect(1); runCurrent(); advanceTimeBy(30_000); runCurrent()
@@ -44,7 +44,7 @@ class DanmakuRepositoryImplTest {
         val source = object : DanmakuConnectionSource {
             override suspend fun resolve(roomId: Long): DanmakuConnection { attempts++; throw IOException("test") }
         }
-        val client = DanmakuWebSocketClient(source)
+        val client = DanmakuWebSocketClient(source, dispatcher = StandardTestDispatcher(testScheduler))
         val state = MutableStateFlow(AppSettings(mockMode = false, autoReconnect = true))
         val repository = DanmakuRepositoryImpl(client, MockDanmakuDataSource(), settings(state), backgroundScope)
         repository.connect(1); runCurrent(); advanceTimeBy(1000); runCurrent()

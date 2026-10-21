@@ -26,7 +26,7 @@ object BiliBiliProtocol {
         val body = buildJsonObject {
             put("uid", uid)
             put("roomid", roomId)
-            put("protover", 2)
+            put("protover", 3)
             put("platform", "web")
             put("type", 2)
             if (token.isNotEmpty()) put("key", token)
@@ -46,6 +46,23 @@ object BiliBiliProtocol {
         val result = mutableListOf<DanmakuMessage>()
         extractPackets(data, result, 0, DecodeBudget())
         return result
+    }
+
+    /** Header-only scan for callback-side liveness; never decompresses or parses JSON here. */
+    internal fun hasHeartbeatReply(data: ByteArray): Boolean {
+        if (data.size > MAX_FRAME_BYTES) return false
+        var pos = 0
+        while (data.size - pos >= HEADER_SIZE) {
+            val header = ByteBuffer.wrap(data, pos, HEADER_SIZE).order(ByteOrder.BIG_ENDIAN)
+            val length = header.int
+            val headerLength = header.short.toInt() and 0xFFFF
+            val version = header.short.toInt() and 0xFFFF
+            val operation = header.int
+            if (length < HEADER_SIZE || length > data.size - pos || headerLength < HEADER_SIZE || headerLength > length) return false
+            if (version in 0..1 && operation == 3 && length - headerLength >= 4) return true
+            pos += length
+        }
+        return false
     }
 
     /** Control packets may occur anywhere in a frame, not only at offset zero. */
@@ -124,16 +141,23 @@ object BiliBiliProtocol {
             null
         } ?: return
         val cmd = (obj["cmd"] as? JsonPrimitive)?.contentOrNull ?: return
-        if (cmd.substringBefore(':') != "DANMU_MSG") return
-        val info = obj["info"] as? JsonArray ?: return
-        val content = (info.getOrNull(1) as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return
-        val userInfo = info.getOrNull(2) as? JsonArray
-        val uid = (userInfo?.getOrNull(0) as? JsonPrimitive)?.longOrNull
-        val username = (userInfo?.getOrNull(1) as? JsonPrimitive)?.contentOrNull ?: "unknown"
+        val command = cmd.substringBefore(':')
+        if (command != "DANMU_MSG" && command != "DANMU_MSG_MIRROR") return
+        val info = obj["info"] as? JsonArray
+        // Both formats occur in the same envelope. A malformed optional v2 payload must not
+        // discard a usable legacy message; v2-only messages must not require the old array.
+        val v2 = (obj["dm_v2"] as? JsonPrimitive)?.takeIf { it.isString }
+            ?.content?.let(DanmakuV2Decoder::decode)
+        val content = v2?.content
+            ?: (info?.getOrNull(1) as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return
+        val userInfo = info?.getOrNull(2) as? JsonArray
+        val uid = if (v2?.hasUid == true) v2.uid else
+            (userInfo?.getOrNull(0) as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }
+        val username = v2?.username ?: (userInfo?.getOrNull(1) as? JsonPrimitive)?.contentOrNull ?: "unknown"
         // B站勋章数组顺序为 [等级, 勋章名, 主播名, 房间号, ...]。
-        val badge = info.getOrNull(3) as? JsonArray
-        val badgeLevel = (badge?.getOrNull(0) as? JsonPrimitive)?.intOrNull
-        val badgeName = (badge?.getOrNull(1) as? JsonPrimitive)?.contentOrNull
+        val badge = info?.getOrNull(3) as? JsonArray
+        val badgeLevel = v2?.badgeLevel ?: (badge?.getOrNull(0) as? JsonPrimitive)?.intOrNull
+        val badgeName = v2?.badgeName ?: (badge?.getOrNull(1) as? JsonPrimitive)?.contentOrNull
         result.add(DanmakuMessage(uid, username, content, badgeName, badgeLevel, System.currentTimeMillis()))
     }
 

@@ -29,6 +29,7 @@ class DanmakuViewModel(
     private var settings = AppSettings()
     private var latestStatus = ConnectionStatus.Idle
     private var latestError: String? = null
+    private var latestTransportDiagnostics = TransportDiagnostics()
     private val presentation = DanmakuPresentationPump(
         scope = viewModelScope,
         nowMs = SystemClock::elapsedRealtime,
@@ -71,6 +72,19 @@ class DanmakuViewModel(
                 if (pipeline.offer(item, SystemClock.elapsedRealtime())) requestPresentation()
             }
         }
+        viewModelScope.launch {
+            danmakuRepository.observeTransportDiagnostics().collect { diagnostics ->
+                if (latestTransportDiagnostics != diagnostics) {
+                    val lossChanged = latestTransportDiagnostics.droppedMessages != diagnostics.droppedMessages ||
+                        latestTransportDiagnostics.droppedFrames != diagnostics.droppedFrames ||
+                        latestTransportDiagnostics.oversizedFrames != diagnostics.oversizedFrames
+                    latestTransportDiagnostics = diagnostics
+                    // Decoded-count-only changes piggyback on existing snapshots; filtered-only
+                    // traffic must not wake the display. New loss diagnostics are shown promptly.
+                    if (lossChanged) requestPresentation()
+                }
+            }
+        }
         connect()
     }
 
@@ -79,7 +93,7 @@ class DanmakuViewModel(
     }
 
     private fun publishPresentation(now: Long): Long? {
-        val snapshot = pipeline.drain(now)
+        val snapshot = pipeline.snapshot(now)
         _uiState.value = DanmakuUiState(
             roomId = roomId,
             status = latestStatus,
@@ -91,7 +105,9 @@ class DanmakuViewModel(
             highSpeedMode = settings.highSpeedMode || snapshot.messagesPerSecond > 100 || snapshot.historyFull,
             errorMessage = latestError,
             receivedVersion = snapshot.receivedVersion,
-            overflowCount = snapshot.overflowCount
+            overflowCount = snapshot.overflowCount,
+            presentationDiagnostics = snapshot.diagnostics,
+            transportDiagnostics = latestTransportDiagnostics
         )
         // At most one future idle reset; no one-second idle loop. New eligible activity postpones
         // this deadline on its next batch. Filtered-only traffic never schedules presentation.
@@ -129,7 +145,7 @@ class DanmakuViewModel(
     }
 
     fun clearScreen() {
-        // Clear both retained and not-yet-presented messages, fold anchors, unread and counters.
+        // Clear display history/counters only. Session transport-loss counters remain available.
         pipeline.clear()
         requestPresentation()
     }
