@@ -33,10 +33,19 @@ class BackupRulesTest {
     }
 
     @Test
-    fun `excluded preferences match login storage filename`() {
+    fun `login preferences stay outside every backup allowlist`() {
         val source = sourceFile("java/com/bililive/danmaku/data/remote/BiliBiliLoginManager.kt").readText()
         assertTrue(source.contains("private const val PREF_NAME = \"bili_login\""))
         assertTrue(source.contains("getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)"))
+        // The sole include is in the file domain, never the sharedpref login storage domain.
+        for (path in listOf("res/xml/backup_rules.xml", "res/xml/data_extraction_rules.xml")) {
+            val includes = parse(path).getElementsByTagName("include")
+            for (index in 0 until includes.length) {
+                val entry = includes.item(index) as Element
+                assertTrue(entry.getAttribute("domain") != "sharedpref")
+                assertTrue(!entry.getAttribute("path").contains("bili_login"))
+            }
+        }
     }
 
     private fun assertSettingsOnly(section: Element) {
@@ -46,12 +55,9 @@ class BackupRulesTest {
         assertEquals("file", settings.getAttribute("domain"))
         assertEquals("datastore/settings.preferences_pb", settings.getAttribute("path"))
 
-        val excludes = section.getElementsByTagName("exclude")
-        assertTrue((0 until excludes.length).any { index ->
-            val entry = excludes.item(index) as Element
-            entry.getAttribute("domain") == "sharedpref" &&
-                entry.getAttribute("path") == "bili_login.xml"
-        })
+        // An include makes this an allowlist: all other files/domains are excluded by default.
+        // Out-of-allowlist excludes are redundant and rejected by Android's FullBackupContent lint.
+        assertEquals(0, section.getElementsByTagName("exclude").length)
     }
 
     private fun parse(path: String) = DocumentBuilderFactory.newInstance()

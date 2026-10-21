@@ -39,3 +39,9 @@ jobs:
 
       - name: Run unit tests, lint and compile debug/test APKs
         run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Show full lint diagnostics
+        if: always()
+        run: |
+          report=app/build/intermediates/lint_intermediate_text_report/debug/lint-results-debug.txt
+          if [ -f "$report" ]; then cat "$report"; fi
