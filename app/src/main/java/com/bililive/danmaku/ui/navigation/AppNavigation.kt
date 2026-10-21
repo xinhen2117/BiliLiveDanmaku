@@ -32,13 +32,15 @@ fun AppNavigation() {
 
     NavHost(navController = navController, startDestination = Routes.ROOM_INPUT) {
         composable(Routes.ROOM_INPUT) {
-            val viewModel = RoomInputViewModel(
-                settingsRepository = app.settingsRepository,
-                validateRoomIdUseCase = app.validateRoomIdUseCase
+            val viewModel: RoomInputViewModel = viewModel(
+                factory = RoomInputViewModel.Factory(
+                    settingsRepository = app.settingsRepository,
+                    validateRoomIdUseCase = app.validateRoomIdUseCase
+                )
             )
             RoomInputScreen(
                 onNavigateToDanmaku = { roomId ->
-                    navController.navigate(Routes.danmaku(roomId))
+                    navController.navigate(Routes.danmaku(roomId)) { launchSingleTop = true }
                 },
                 onNavigateToSettings = {
                     navController.navigate(Routes.SETTINGS)

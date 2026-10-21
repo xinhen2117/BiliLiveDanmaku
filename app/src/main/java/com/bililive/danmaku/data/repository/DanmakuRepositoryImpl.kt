@@ -15,25 +15,13 @@ class DanmakuRepositoryImpl(
     private val scope: CoroutineScope
 ) : DanmakuRepository {
 
-    private var isMockMode = true
-    private var currentRoomId: Long = 0
-
     private val _filteredDanmaku = MutableSharedFlow<DanmakuItem>(extraBufferCapacity = 256)
     private val _status = MutableStateFlow(ConnectionStatus.Idle)
     private val _error = MutableSharedFlow<DanmakuError>(extraBufferCapacity = 16)
 
     private var collectJob: Job? = null
 
-    init {
-        scope.launch {
-            settingsRepository.observeSettings().collect { settings ->
-                isMockMode = settings.mockMode
-            }
-        }
-    }
-
     override fun connect(roomId: Long) {
-        currentRoomId = roomId
         disconnect()
         collectJob?.cancel()
 
@@ -45,7 +33,7 @@ class DanmakuRepositoryImpl(
                     launch { mockDataSource.status.collect { _status.value = it } }
                 } else {
                     // 直连 B站
-                    webSocketClient.connect(roomId, scope)
+                    webSocketClient.connect(roomId, this, settings.autoReconnect)
                     launch { webSocketClient.danmaku.collect { _filteredDanmaku.emit(it) } }
                     launch { webSocketClient.status.collect { _status.value = it } }
                     launch { webSocketClient.error.collect { _error.emit(it) } }
