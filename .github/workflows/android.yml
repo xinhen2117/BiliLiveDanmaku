@@ -40,6 +40,22 @@ jobs:
       - name: Run unit tests, lint and compile debug/test APKs
         run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 
+      - name: Verify packaged license texts
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          source = Path('app/src/main/assets/open_source_licenses')
+          files = sorted(source.iterdir())
+          assert files, 'License assets must not be empty'
+          assert (source / 'PROJECT-MIT.txt').read_bytes() == Path('LICENSE').read_bytes()
+          with ZipFile('app/build/outputs/apk/debug/app-debug.apk') as apk:
+              for file in files:
+                  assert apk.read(f'assets/open_source_licenses/{file.name}') == file.read_bytes(), file.name
+          print(f'Verified {len(files)} license/notice assets in the debug APK')
+          PY
+
       - name: Show full lint diagnostics
         if: always()
         run: |

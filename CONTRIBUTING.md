@@ -74,4 +74,4 @@ Wrapper JAR 必须跟随源码提交，不能加入 `.gitignore`。升级时应�
 
 新增的 ZXing Core 3.5.3 依赖采用 [Apache-2.0 许可](https://github.com/zxing/zxing/blob/zxing-3.5.3/LICENSE)；分发 APK 前应按各依赖的许可保留所需的第三方许可文本和通知。这不改变项目自身的许可证声明。
 
-许可证声明沿用 README；目前完整许可证文件和版权信息仍待维护者确认。请勿代替权利人填写或猜测这些信息。
+项目自有代码采用 [MIT License](LICENSE)。第三方材料保留其原始许可，见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。添加或升级依赖时，请核对实际版本的许可、版权声明及 NOTICE；不要删除上游归属，也不要将第三方材料标为项目自有的 MIT 代码。

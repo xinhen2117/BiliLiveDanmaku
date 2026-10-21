@@ -134,6 +134,6 @@ app/src/androidTest/  需要设备 / 模拟器的窗口恢复测试
 
 ## License
 
-MIT
+项目自有代码采用 [MIT License](LICENSE)，Copyright (c) 2026 xinhen2117。
 
-原 README 声明为 MIT，但仓库目前缺少完整的 `LICENSE` 文件。许可证正文及版权信息仍需项目维护者确认和补齐，本次文档整理不改变原有许可声明。
+Gradle Wrapper、依赖库及其附带材料仍遵循各自的许可证，不被项目的 MIT 声明重新许可。已核对的版本、上游来源及保留的许可/归属说明见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
