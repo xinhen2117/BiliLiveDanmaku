@@ -5,6 +5,7 @@ import com.bililive.danmaku.domain.model.AppSettings
 import com.bililive.danmaku.domain.model.DanmakuError
 import com.bililive.danmaku.domain.model.DanmakuItem
 import com.bililive.danmaku.domain.model.ConnectionStatus
+import com.bililive.danmaku.domain.model.TransportDiagnostics
 import kotlinx.coroutines.flow.Flow
 
 interface DanmakuRepository {
@@ -13,6 +14,7 @@ interface DanmakuRepository {
     fun observeDanmaku(): Flow<DanmakuItem>
     fun observeStatus(): Flow<ConnectionStatus>
     fun observeError(): Flow<DanmakuError>
+    fun observeTransportDiagnostics(): Flow<TransportDiagnostics> = kotlinx.coroutines.flow.flowOf(TransportDiagnostics())
     fun isConnected(): Boolean
 }
 

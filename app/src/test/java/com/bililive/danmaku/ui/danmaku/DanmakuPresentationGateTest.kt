@@ -88,20 +88,21 @@ class DanmakuPresentationGateTest {
     @Test fun `hidden arrivals stay bounded and resume latest retained data once`() {
         val gate = DanmakuPresentationGate()
         val pipeline = DanmakuMessagePipeline(
-            DanmakuPipelineConfig(maxHistory = 2, duplicateFoldEnabled = false), pendingCapacity = 3
+            DanmakuPipelineConfig(maxHistory = 2, duplicateFoldEnabled = false)
         )
         repeat(20) {
             val item = DanmakuItem(it.toString(), 1L, null, "viewer", "text $it", 0L)
             if (pipeline.offer(item, it.toLong())) assertFalse(gate.invalidate())
             assertNull(gate.nextDelayMillis(it.toLong(), null))
         }
-        assertEquals(3, pipeline.pendingCount)
+        assertEquals(2, pipeline.historyCount)
         gate.setVisible(true)
         assertEquals(0L, gate.nextDelayMillis(20, null))
-        val snapshot = pipeline.drain(20)
+        val snapshot = pipeline.snapshot(20)
         gate.didPublish(20)
         assertEquals(listOf("18", "19"), snapshot.messages.map { it.id })
-        assertEquals(17L, snapshot.overflowCount)
+        assertEquals(0L, snapshot.overflowCount)
+        assertEquals(18L, snapshot.diagnostics.historyCountEvictedRows)
         assertEquals(20L, snapshot.receivedVersion)
         assertNull(gate.nextDelayMillis(20, null))
     }

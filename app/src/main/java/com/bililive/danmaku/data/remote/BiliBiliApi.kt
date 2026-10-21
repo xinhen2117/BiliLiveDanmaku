@@ -1,7 +1,5 @@
 package com.bililive.danmaku.data.remote
 
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -54,7 +52,7 @@ class BiliBiliApi(
         if (roomInit.code != 0) {
             throw Exception("获取房间信息失败: ${roomInit.message}")
         }
-        return roomInit.data?.roomId ?: throw Exception("房间号为空")
+        return roomInit.data?.roomId?.takeIf { it > 0 } ?: throw IOException("Invalid room ID response")
     }
 
     /**
@@ -109,15 +107,9 @@ class BiliBiliApi(
         }
         val data = confResp.data ?: throw Exception("弹幕配置为空")
 
-        // 选择最佳服务器（优先选择 CDN 节点）
-        val bestHost = data.hostServerList.firstOrNull()?.host ?: "broadcastlv.chat.bilibili.com"
-        val wssPort = data.hostServerList.firstOrNull()?.wssPort ?: 443
-
-        return DanmuConf(
-            token = data.token,
-            host = bestHost,
-            wssPort = wssPort
-        )
+        // Preserve all server-provided endpoints. Never invent an anonymous/tokenless fallback.
+        if (data.token.isBlank() || data.hostServerList.isEmpty()) throw IOException("Incomplete danmaku configuration")
+        return DanmuConf(token = data.token, hosts = data.hostServerList)
     }
 
     fun destroy() {
@@ -125,70 +117,3 @@ class BiliBiliApi(
         client.connectionPool.evictAll()
     }
 }
-
-// ===== 数据类 =====
-
-@Serializable
-data class RoomInitResponse(
-    val code: Int = -1,
-    val message: String = "",
-    val data: RoomInitData? = null
-)
-
-@Serializable
-data class RoomInitData(
-    @SerialName("room_id") val roomId: Long = 0,
-    @SerialName("uid") val uid: Long = 0
-)
-
-@Serializable
-data class RoomInfoResponse(
-    val code: Int = -1,
-    val message: String = "",
-    val data: RoomInfoData? = null
-)
-
-@Serializable
-data class RoomInfoData(
-    @SerialName("room_id") val roomId: Long = 0,
-    val title: String = "",
-    val uname: String? = null,
-    val online: Int? = null,
-    @SerialName("live_status") val liveStatus: Int? = null
-)
-
-@Serializable
-data class DanmuConfResponse(
-    val code: Int = -1,
-    val message: String = "",
-    val data: DanmuConfData? = null
-)
-
-@Serializable
-data class DanmuConfData(
-    val token: String = "",
-    @SerialName("host_server_list") val hostServerList: List<HostServer> = emptyList()
-)
-
-@Serializable
-data class HostServer(
-    val host: String = "",
-    val port: Int = 2243,
-    @SerialName("wss_port") val wssPort: Int = 443,
-    @SerialName("ws_port") val wsPort: Int = 2244
-)
-
-data class DanmuConf(
-    val token: String,
-    val host: String,
-    val wssPort: Int
-)
-
-data class RoomInfo(
-    val roomId: Long,
-    val shortRoomId: Long,
-    val title: String,
-    val uname: String,
-    val online: Int,
-    val liveStatus: Int  // 0=未开播, 1=直播中, 2=轮播
-)

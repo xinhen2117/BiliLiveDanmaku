@@ -16,6 +16,7 @@ class DanmakuRepositoryImpl(
 ) : DanmakuRepository {
 
     private val _filteredDanmaku = MutableSharedFlow<DanmakuItem>(extraBufferCapacity = 256)
+    private val _diagnostics = MutableStateFlow(TransportDiagnostics())
     private val _status = MutableStateFlow(ConnectionStatus.Idle)
     private val _error = MutableSharedFlow<DanmakuError>(extraBufferCapacity = 16)
 
@@ -24,6 +25,7 @@ class DanmakuRepositoryImpl(
     override fun connect(roomId: Long) {
         disconnect()
         collectJob?.cancel()
+        _diagnostics.value = TransportDiagnostics()
 
         collectJob = scope.launch {
             settingsRepository.observeSettings().first().let { settings ->
@@ -37,6 +39,7 @@ class DanmakuRepositoryImpl(
                     launch { webSocketClient.danmaku.collect { _filteredDanmaku.emit(it) } }
                     launch { webSocketClient.status.collect { _status.value = it } }
                     launch { webSocketClient.error.collect { _error.emit(it) } }
+                    launch { webSocketClient.diagnostics.collect { _diagnostics.value = it } }
                 }
             }
         }
@@ -52,6 +55,7 @@ class DanmakuRepositoryImpl(
 
     override fun observeDanmaku(): Flow<DanmakuItem> = _filteredDanmaku.asSharedFlow()
     override fun observeStatus(): Flow<ConnectionStatus> = _status.asStateFlow()
+    override fun observeTransportDiagnostics(): Flow<TransportDiagnostics> = _diagnostics.asStateFlow()
     override fun observeError(): Flow<DanmakuError> = _error.asSharedFlow()
     override fun isConnected(): Boolean = _status.value == ConnectionStatus.Connected
 }

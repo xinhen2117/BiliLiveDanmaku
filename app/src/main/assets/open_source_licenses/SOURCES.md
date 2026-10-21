@@ -4,6 +4,7 @@ The project MIT license applies only to project-owned code. Third-party texts be
 
 | File | Upstream source | SHA-256 |
 | --- | --- | --- |
+| [Blivedm-Go-MIT.txt](Blivedm-Go-MIT.txt) | [Exact source](https://raw.githubusercontent.com/Akegarasu/blivedm-go/957b543d2bfa8c2ac8a7af2fb42ae73eb92443b2/LICENCE) | `d772a05f5cddd7e2fd7f51d64a44c9b837049cf90c39853cbf2a551bd14a727c` |
 | [Apache-2.0.txt](Apache-2.0.txt) | [Exact source](https://www.apache.org/licenses/LICENSE-2.0.txt) | `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` |
 | [Brotli-MIT.txt](Brotli-MIT.txt) | [Exact source](https://raw.githubusercontent.com/google/brotli/4363f2d74b8af198f78b08e10cd0b3ead48af590/LICENSE) | `3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94` |
 | [Kotlin-Boost-1.0.txt](Kotlin-Boost-1.0.txt) | [Exact source](https://raw.githubusercontent.com/JetBrains/kotlin/v1.9.22/license/third_party/boost_LICENSE.txt) | `8d8291caf1cee26d23acf3eb67c9f9a2d58f1c681b16a4fbe8cbfb9e3c0b5a9b` |
@@ -18,6 +19,7 @@ The project MIT license applies only to project-owned code. Third-party texts be
 
 ## Scope notes
 
+- Blivedm-Go-MIT.txt preserves Copyright (c) 2022 秋葉杏 for the dm_v2 schema field reference. DanmakuV2Decoder.kt is an independently written bounded reader of the necessary EventDm/EventDmUser/EventDmMedal fields from commit 957b543d2bfa8c2ac8a7af2fb42ae73eb92443b2, not a copy of the Go library or generated protobuf runtime.
 - Apache-2.0 covers the main AndroidX/Compose, OkHttp/Okio, ZXing, Kotlin and kotlinx components. This does not override differently licensed embedded material.
 - Brotli-MIT.txt retains the Brotli Authors copyright, not the project copyright. Its source commit matches all 15 Java files in dec-0.1.2-sources.jar.
 - ZXing-NOTICE.txt is the upstream project-wide notice, including Barcode4J and JCommander. Only ZXing core is declared by this app; preserving the complete notice does not claim every ZXing module is included.

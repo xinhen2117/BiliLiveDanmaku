@@ -175,15 +175,26 @@ fun DanmakuScreen(onBack: () -> Unit, viewModel: DanmakuViewModel) {
                     )
                     if (!lowPower) {
                         Text(
-                            "${statusText(uiState.status)} · ${uiState.totalCount} 条 · ${uiState.messagesPerSecond}/秒" +
-                                if (uiState.overflowCount > 0) " · 缓存淘汰 ${uiState.overflowCount}" else "",
+                            "${statusText(uiState.status)} · 显示层收到 ${uiState.totalCount} 条 · 保留 ${uiState.messages.size} 行 · ${uiState.messagesPerSecond}/秒",
                             style = MaterialTheme.typography.labelSmall,
                             color = colors.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = if (compactToolbar) 0.dp else 4.dp)
                         )
                     } else {
-                        Text("轻触显示控制 · 返回退出低功耗 · ${statusText(uiState.status)}" +
-                                if (uiState.overflowCount > 0) " · 缓存淘汰 ${uiState.overflowCount}" else "",
+                        Text("轻触显示控制 · 返回退出低功耗 · ${statusText(uiState.status)}",
+                            style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp))
+                    }
+                }
+                if (!lowPower || controlsVisible) {
+                    val diagnostics = uiState.presentationDiagnostics
+                    if (diagnostics.hasAdjustments) {
+                        Text(presentationDiagnosticsText(diagnostics),
+                            style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp))
+                    }
+                    if (uiState.transportDiagnostics.hasLoss) {
+                        Text(transportDiagnosticsText(uiState.transportDiagnostics),
                             style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 8.dp))
                     }
