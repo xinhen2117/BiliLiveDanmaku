@@ -1,0 +1,40 @@
+name: Append the approved test release limitation
+
+on:
+  push:
+    branches: [maintain/test-release-note-20261021]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: append-test-20261021-1-note
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ github.event_name == 'push' && github.repository == 'xinhen2117/BiliLiveDanmaku' && github.ref == 'refs/heads/maintain/test-release-note-20261021' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts -p 'test_append_test_release_note.py'
+
+  append_note:
+    needs: verify
+    if: ${{ github.event_name == 'push' && github.repository == 'xinhen2117/BiliLiveDanmaku' && github.ref == 'refs/heads/maintain/test-release-note-20261021' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify fixed tag and existing assets, then append one warning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/append_test_release_note.py
