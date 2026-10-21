@@ -2,7 +2,7 @@ name: Android checks
 
 on:
   push:
-    branches: [master, improve/test-apk-downloads-20261021]
+    branches: [master, improve/test-apk-ingestion-20261021]
   pull_request:
   workflow_dispatch:
 
@@ -99,7 +99,7 @@ jobs:
   publish_test_prerelease:
     # A one-time, maintainer-authorized test tag, never a general release pipeline.
     needs: debug
-    if: ${{ github.event_name == 'push' && github.repository == 'xinhen2117/BiliLiveDanmaku' && github.ref == 'refs/heads/improve/test-apk-downloads-20261021' }}
+    if: ${{ github.event_name == 'push' && github.repository == 'xinhen2117/BiliLiveDanmaku' && github.ref == 'refs/heads/improve/test-apk-ingestion-20261021' }}
     permissions:
       contents: write
     runs-on: ubuntu-24.04

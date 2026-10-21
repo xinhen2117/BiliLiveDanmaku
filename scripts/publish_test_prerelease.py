@@ -14,8 +14,8 @@ from verify_public_suffix_source import check as check_public_suffix_source
 
 
 REPOSITORY = "xinhen2117/BiliLiveDanmaku"
-BRANCH = "refs/heads/improve/test-apk-downloads-20261021"
-TAG = "test-20261021.1"
+BRANCH = "refs/heads/improve/test-apk-ingestion-20261021"
+TAG = "test-20261021.2"
 FILES = ("BiliLiveDanmaku-test.apk", "SHA256SUMS", "BUILD-INFO.txt")
 
 
@@ -102,18 +102,23 @@ def publish(commit, files):
     if release is None:
         body = (
             "开发测试版 / Debug，未经真机验证，不是稳定版。\n\n"
-            "Android 8.0+；包名 com.bililive.danmaku.debug，版本 1.0.0-mvp-debug。"
+            "Android 8.0+；包名 com.bililive.danmaku.debug，版本 1.0.1-mvp-debug（versionCode 2）。"
             "测试包与正式包分开安装，数据不互通。首次请使用默认 Mock 模式，无需登录。\n\n"
-            "临时 Debug 签名可能在其他构建中变化，不能保证覆盖升级；卸载会清除该测试包的本地设置和登录信息。"
+            "虽然 versionCode 已递增，临时 Debug 签名仍可能与旧包不同，不能保证覆盖升级；卸载会清除该测试包的本地设置和登录信息。"
             "不要在测试包里使用重要账号或敏感凭据。真实登录/弹幕、功耗与防烧屏效果未经真机验证。\n\n"
-            "本次包含下载/版本说明、扫码失败可刷新与登录文案修正。"
+            "本次修复合成回归中的两处本地漏收：单帧 200 条只交付 65 条、隐藏界面 600 条只保留 512 条。"
+            "新回归在容量内分别保留全部 200/600 条；这些数字是合成测试结果，不是线上完整率承诺。"
+            "增加有界 dm_v2/MIRROR 解码、可信 TLS 节点轮换、自动重连开启时最多一次认证拒绝后的凭据重新发现，"
+            "并分别展示接收丢弃与显示淘汰诊断。\n\n"
+            "仍有队列/解析/历史容量上限；服务端未推送与断网期间消息不能保证补回，不承诺全部实时弹幕。"
+            "getDanmuInfo/WBI 发现迁移尚未完成，无风控绕过。旧 test-20261021.1 与附件保留不覆盖。\n\n"
             "单元测试、Lint、APK 编译及签名/包名/许可资产检查通过，不代表实际设备测试通过。"
             "Lint 仍有已披露的警告及部分库检查未运行。\n\n"
             f"构建提交：{commit}\n构建记录：{os.environ.get('BUILD_RUN_URL', '')}\n\n"
             "下载 APK 时同时核对 SHA256SUMS 和 BUILD-INFO.txt。源码与第三方许可说明随本提交保留。"
         )
         release = api("POST", "releases", {"tag_name": TAG, "target_commitish": commit,
-                      "name": "2026-10-21 测试版（Debug，未真机验证）", "body": body,
+                      "name": "2026-10-21 弹幕接收修复测试版 2（Debug，未真机验证）", "body": body,
                       "draft": True, "prerelease": True, "make_latest": "false"})
     check_release(release, commit)
     existing = check_assets(release["assets"], files)
@@ -135,6 +140,11 @@ def publish(commit, files):
     return release
 
 
+def check_expected_version(information):
+    if "Version: 1.0.1-mvp-debug (2)" not in information or "Minimum SDK: 26" not in information:
+        raise ValueError("This one-time publication expects debug version 1.0.1-mvp-debug (2) and minimum SDK 26")
+
+
 def main():
     commit = check_context(os.environ)
     source = Path("test-apk")
@@ -150,8 +160,7 @@ def main():
             if path.read_bytes() != (verified / name).read_bytes():
                 raise ValueError(f"Artifact metadata/bytes do not match the independently verified APK: {name}")
     information = files["BUILD-INFO.txt"].read_text(encoding="utf-8").splitlines()
-    if "Version: 1.0.0-mvp-debug (1)" not in information or "Minimum SDK: 26" not in information:
-        raise ValueError("This one-time publication expects the reviewed test version and minimum SDK")
+    check_expected_version(information)
     release = publish(commit, files)
     print(f"Verified test prerelease: {release['html_url']}")
 
